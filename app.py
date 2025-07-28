@@ -909,10 +909,29 @@ def show_missing_analysis_section(analyzer):
         goals_no_checkins_pct = (goals_no_checkins_count / total_members * 100) if total_members > 0 else 0
         st.metric("Has Goals but No Checkins", goals_no_checkins_count, delta=f"{goals_no_checkins_pct:.1f}%")
     
-    # Detailed tables
+    # Visual representation with tables below each chart
+    st.subheader("📊 Missing Analysis Visualization")
+    
     col1, col2 = st.columns(2)
     
     with col1:
+        # Goals pie chart
+        members_with_goals = total_members - no_goals_count
+        goal_data = pd.DataFrame({
+            'Status': ['Have Goals', 'No Goals'],
+            'Count': [members_with_goals, no_goals_count]
+        })
+        
+        fig_goals = px.pie(
+            goal_data, 
+            values='Count', 
+            names='Status',
+            title="Goal Status Distribution",
+            color_discrete_map={'Have Goals': '#00CC66', 'No Goals': '#FF6B6B'}
+        )
+        st.plotly_chart(fig_goals, use_container_width=True)
+        
+        # Members Without Goals table below the goals chart
         st.subheader("🚫 Members Without Goals")
         if members_without_goals:
             no_goals_df = pd.DataFrame(members_without_goals)
@@ -935,75 +954,6 @@ def show_missing_analysis_section(analyzer):
             st.success("✅ All filtered members have goals!")
     
     with col2:
-        st.subheader("📝 Members Without Any Checkins")
-        if members_without_checkins:
-            no_checkins_df = pd.DataFrame(members_without_checkins)
-            # Add color coding based on whether they have goals
-            styled_df = no_checkins_df[['name', 'username', 'job', 'has_goal']].copy()
-            st.dataframe(
-                styled_df,
-                use_container_width=True,
-                height=300
-            )
-            
-            # Download button for members without checkins
-            csv_no_checkins = no_checkins_df.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Members Without Checkins",
-                data=csv_no_checkins,
-                file_name=f"members_without_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="download_no_checkins"
-            )
-        else:
-            st.success("✅ All filtered members have made checkins!")
-    
-    # Special attention section
-    if members_with_goals_no_checkins:
-        st.subheader("⚠️ Members with Goals but No Checkins (Need Attention)")
-        st.warning("These members have set up goals but haven't made any checkins yet. They may need guidance or reminders.")
-        
-        goals_no_checkins_df = pd.DataFrame(members_with_goals_no_checkins)
-        st.dataframe(
-            goals_no_checkins_df[['name', 'username', 'job']],
-            use_container_width=True,
-            height=200
-        )
-        
-        # Download button
-        csv_goals_no_checkins = goals_no_checkins_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Members with Goals but No Checkins",
-            data=csv_goals_no_checkins,
-            file_name=f"members_goals_no_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-            key="download_goals_no_checkins"
-        )
-    
-    # Visual representation
-    st.subheader("📊 Missing Analysis Visualization")
-    
-    # Create pie chart for goal status
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Goals pie chart
-        members_with_goals = total_members - no_goals_count
-        goal_data = pd.DataFrame({
-            'Status': ['Have Goals', 'No Goals'],
-            'Count': [members_with_goals, no_goals_count]
-        })
-        
-        fig_goals = px.pie(
-            goal_data, 
-            values='Count', 
-            names='Status',
-            title="Goal Status Distribution",
-            color_discrete_map={'Have Goals': '#00CC66', 'No Goals': '#FF6B6B'}
-        )
-        st.plotly_chart(fig_goals, use_container_width=True)
-    
-    with col2:
         # Checkins pie chart  
         members_with_checkins = total_members - no_checkins_count
         checkin_data = pd.DataFrame({
@@ -1019,6 +969,30 @@ def show_missing_analysis_section(analyzer):
             color_discrete_map={'Have Checkins': '#4ECDC4', 'No Checkins': '#FFE66D'}
         )
         st.plotly_chart(fig_checkins, use_container_width=True)
+        
+        # Members with Goals but No Checkins table below the checkins chart
+        if members_with_goals_no_checkins:
+            st.subheader("⚠️ Members with Goals but No Checkins")
+            st.warning("These members have set up goals but haven't made any checkins yet. They may need guidance or reminders.")
+            
+            goals_no_checkins_df = pd.DataFrame(members_with_goals_no_checkins)
+            st.dataframe(
+                goals_no_checkins_df[['name', 'username', 'job']],
+                use_container_width=True,
+                height=300
+            )
+            
+            # Download button
+            csv_goals_no_checkins = goals_no_checkins_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Members with Goals but No Checkins",
+                data=csv_goals_no_checkins,
+                file_name=f"members_goals_no_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_goals_no_checkins"
+            )
+        else:
+            st.success("✅ All members with goals have made checkins!")
 
 def show_okr_analysis(okr_shifts, last_friday):
     """Show OKR shift analysis"""
