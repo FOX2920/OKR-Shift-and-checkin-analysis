@@ -59,7 +59,7 @@ class OKRAnalysisSystem:
             ])
             
             # Filter out unwanted job titles
-            filtered_df = df[~df['job'].str.lower().str.contains('kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường', na=False)]
+            filtered_df = df[~df['job'].str.lower().str.contains('kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường', na=False)]
             
             self.filtered_members_df = filtered_df
             return filtered_df
