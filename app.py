@@ -1174,7 +1174,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         # Pre-configured email settings
         email_from = "apluscorp.hr@gmail.com"
         email_password = 'mems nctq yxss gruw'  # App password
-        email_to = "21522557@gm.uit.edu.vn"
+        email_to = "xnk3@apluscorp.vn"
         
         st.info("📧 Email settings are pre-configured")
         st.text(f"From: {email_from}")
