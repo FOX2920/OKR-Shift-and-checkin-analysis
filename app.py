@@ -47,13 +47,14 @@ class OKRAnalysisSystem:
             group = response_data.get('group', {})
             members = group.get('members', [])
             
-            # Convert to DataFrame
+            # Convert to DataFrame with email field
             df = pd.DataFrame([
                 {
                     'id': str(m.get('id', '')),
                     'name': m.get('name', ''),
                     'username': m.get('username', ''),
-                    'job': m.get('title', '')
+                    'job': m.get('title', ''),
+                    'email': m.get('email', '')  # Added email field
                 }
                 for m in members
             ])
@@ -370,6 +371,7 @@ class OKRAnalysisSystem:
                         'name': member_name,
                         'username': member_info.get('username', ''),
                         'job': member_info.get('job', ''),
+                        'email': member_info.get('email', ''),  # Added email field
                         'id': member_info.get('id', '')
                     })
                 
@@ -378,6 +380,7 @@ class OKRAnalysisSystem:
                         'name': member_name,
                         'username': member_info.get('username', ''),
                         'job': member_info.get('job', ''),
+                        'email': member_info.get('email', ''),  # Added email field
                         'id': member_info.get('id', ''),
                         'has_goal': has_goal
                     })
@@ -387,6 +390,7 @@ class OKRAnalysisSystem:
                         'name': member_name,
                         'username': member_info.get('username', ''),
                         'job': member_info.get('job', ''),
+                        'email': member_info.get('email', ''),  # Added email field
                         'id': member_info.get('id', '')
                     })
             
@@ -936,7 +940,7 @@ def show_missing_analysis_section(analyzer):
         if members_without_goals:
             no_goals_df = pd.DataFrame(members_without_goals)
             st.dataframe(
-                no_goals_df[['name', 'username', 'job']],
+                no_goals_df[['name', 'username', 'job', 'email']],  # Added email to display
                 use_container_width=True,
                 height=300
             )
@@ -977,7 +981,7 @@ def show_missing_analysis_section(analyzer):
             
             goals_no_checkins_df = pd.DataFrame(members_with_goals_no_checkins)
             st.dataframe(
-                goals_no_checkins_df[['name', 'username', 'job']],
+                goals_no_checkins_df[['name', 'username', 'job', 'email']],  # Added email to display
                 use_container_width=True,
                 height=300
             )
