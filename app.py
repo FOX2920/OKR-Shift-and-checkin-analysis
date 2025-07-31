@@ -10,6 +10,15 @@ from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Tuple, Optional
 import warnings
 import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+import base64
+from io import BytesIO
+import plotly.io as pio
+
 warnings.filterwarnings('ignore')
 
 # Set page config
@@ -715,6 +724,381 @@ class OKRAnalysisSystem:
         return sorted(overall_checkins, key=lambda x: x['total_checkins'], reverse=True)
 
 
+class EmailReportGenerator:
+    """Generate and send email reports for OKR analysis"""
+    
+    def __init__(self, smtp_server="smtp.gmail.com", smtp_port=587):
+        self.smtp_server = smtp_server
+        self.smtp_port = smtp_port
+
+    def create_chart_image(self, fig, filename="chart.png"):
+        """Convert plotly figure to base64 encoded image"""
+        img_bytes = pio.to_image(fig, format="png", width=800, height=600)
+        img_base64 = base64.b64encode(img_bytes).decode()
+        return img_base64
+
+    def generate_report_charts(self, analyzer, okr_shifts, members_without_goals, members_without_checkins):
+        """Generate charts for email report"""
+        charts = {}
+        
+        try:
+            # 1. OKR Status Distribution Chart
+            total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+            members_with_goals = total_members - len(members_without_goals)
+            
+            goal_data = pd.DataFrame({
+                'Status': ['Có OKR', 'Chưa có OKR'],
+                'Count': [members_with_goals, len(members_without_goals)],
+                'Percentage': [
+                    (members_with_goals / total_members * 100) if total_members > 0 else 0,
+                    (len(members_without_goals) / total_members * 100) if total_members > 0 else 0
+                ]
+            })
+            
+            fig_goals = px.pie(
+                goal_data, 
+                values='Count', 
+                names='Status',
+                title="Phân bố trạng thái OKR",
+                color_discrete_map={'Có OKR': '#00CC66', 'Chưa có OKR': '#FF6B6B'}
+            )
+            charts['okr_status'] = self.create_chart_image(fig_goals)
+            
+            # 2. Checkin Status Distribution Chart
+            members_with_checkins = total_members - len(members_without_checkins)
+            checkin_data = pd.DataFrame({
+                'Status': ['Có Checkin', 'Chưa Checkin'],
+                'Count': [members_with_checkins, len(members_without_checkins)],
+                'Percentage': [
+                    (members_with_checkins / total_members * 100) if total_members > 0 else 0,
+                    (len(members_without_checkins) / total_members * 100) if total_members > 0 else 0
+                ]
+            })
+            
+            fig_checkins = px.pie(
+                checkin_data, 
+                values='Count', 
+                names='Status',
+                title="Phân bố trạng thái Checkin",
+                color_discrete_map={'Có Checkin': '#4ECDC4', 'Chưa Checkin': '#FFE66D'}
+            )
+            charts['checkin_status'] = self.create_chart_image(fig_checkins)
+            
+            # 3. OKR Shifts Chart (Top 15 users)
+            if okr_shifts:
+                okr_df = pd.DataFrame(okr_shifts[:15])  # Top 15 users
+                
+                colors = ['#FF6B6B' if shift < 0 else '#00CC66' if shift > 0 else '#FFE66D' for shift in okr_df['okr_shift']]
+                
+                fig_shifts = go.Figure()
+                fig_shifts.add_trace(go.Bar(
+                    x=okr_df['user_name'],
+                    y=okr_df['okr_shift'],
+                    marker_color=colors,
+                    text=[f"{shift:.2f}" for shift in okr_df['okr_shift']],
+                    textposition='auto'
+                ))
+                
+                fig_shifts.update_layout(
+                    title="Dịch chuyển OKR của nhân viên (Top 15)",
+                    xaxis_title="Nhân viên",
+                    yaxis_title="Mức dịch chuyển",
+                    xaxis_tickangle=45,
+                    height=600
+                )
+                charts['okr_shifts'] = self.create_chart_image(fig_shifts)
+            
+        except Exception as e:
+            st.error(f"Error generating charts: {e}")
+        
+        return charts
+
+    def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
+                           members_with_goals_no_checkins, okr_shifts, charts):
+        """Create HTML email content"""
+        
+        current_date = datetime.now().strftime("%d/%m/%Y")
+        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+        
+        # Calculate statistics
+        members_with_goals = total_members - len(members_without_goals)
+        members_with_checkins = total_members - len(members_without_checkins)
+        
+        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+        
+        # Generate tables
+        goals_table = self._generate_table_html(members_without_goals, 
+                                               ["Tên", "Username", "Chức vụ"], 
+                                               ["name", "username", "job"])
+        
+        checkins_table = self._generate_table_html(members_without_checkins,
+                                                 ["Tên", "Username", "Chức vụ", "Có OKR"],
+                                                 ["name", "username", "job", "has_goal"])
+        
+        goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
+                                                          ["Tên", "Username", "Chức vụ"],
+                                                          ["name", "username", "job"])
+        
+        # Top performers table
+        top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
+        top_performers_table = self._generate_okr_table_html(top_performers)
+        
+        # Issue users table
+        issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
+        issue_performers_table = self._generate_okr_table_html(issue_performers)
+        
+        html_content = f"""
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px; }}
+                .section {{ background: #f8f9fa; padding: 25px; margin: 25px 0; border-radius: 10px; border-left: 5px solid #007bff; }}
+                .metrics {{ display: flex; justify-content: space-around; margin: 20px 0; flex-wrap: wrap; }}
+                .metric {{ background: white; padding: 20px; border-radius: 8px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 150px; margin: 10px; }}
+                .metric-value {{ font-size: 28px; font-weight: bold; color: #007bff; }}
+                .metric-label {{ font-size: 14px; color: #666; margin-top: 5px; }}
+                table {{ width: 100%; border-collapse: collapse; margin: 15px 0; background: white; border-radius: 8px; overflow: hidden; }}
+                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background: #007bff; color: white; font-weight: bold; }}
+                tr:hover {{ background: #f5f5f5; }}
+                .chart-container {{ text-align: center; margin: 25px 0; }}
+                .chart-container img {{ max-width: 100%; height: auto; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }}
+                .positive {{ color: #28a745; font-weight: bold; }}
+                .negative {{ color: #dc3545; font-weight: bold; }}
+                .neutral {{ color: #ffc107; font-weight: bold; }}
+                .footer {{ text-align: center; margin-top: 40px; padding: 20px; background: #343a40; color: white; border-radius: 10px; }}
+                .alert {{ padding: 15px; margin: 15px 0; border-radius: 5px; }}
+                .alert-warning {{ background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; }}
+                .alert-info {{ background: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
+                <h2>{selected_cycle['name']}</h2>
+                <p>Ngày báo cáo: {current_date}</p>
+            </div>
+            
+            <div class="section">
+                <h2>📈 TỔNG QUAN</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value">{total_members}</div>
+                        <div class="metric-label">Tổng nhân viên</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">{members_with_goals}</div>
+                        <div class="metric-label">Có OKR</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">{members_with_checkins}</div>
+                        <div class="metric-label">Có Checkin</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">{progress_users}</div>
+                        <div class="metric-label">Tiến bộ</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>🎯 PHÂN BỐ TRẠNG THÁI OKR</h2>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{charts.get('okr_status', '')}" alt="OKR Status Chart">
+                </div>
+                <div class="alert alert-info">
+                    <strong>Thống kê:</strong> {members_with_goals}/{total_members} nhân viên đã có OKR ({(members_with_goals/total_members*100):.1f}%)
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📝 PHÂN BỐ TRẠNG THÁI CHECKIN</h2>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{charts.get('checkin_status', '')}" alt="Checkin Status Chart">
+                </div>
+                <div class="alert alert-info">
+                    <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📊 DỊCH CHUYỂN OKR</h2>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{charts.get('okr_shifts', '')}" alt="OKR Shifts Chart">
+                </div>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value positive">{progress_users}</div>
+                        <div class="metric-label">Tiến bộ</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value neutral">{stable_users}</div>
+                        <div class="metric-label">Ổn định</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value negative">{issue_users}</div>
+                        <div class="metric-label">Cần quan tâm</div>
+                    </div>
+                </div>
+            </div>
+        """
+        
+        # Add detailed tables
+        if members_without_goals:
+            html_content += f"""
+            <div class="section">
+                <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
+                <div class="alert alert-warning">
+                    <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
+                </div>
+                {goals_table}
+            </div>
+            """
+        
+        if members_without_checkins:
+            html_content += f"""
+            <div class="section">
+                <h2>📝 NHÂN VIÊN CHƯA CHECKIN ({len(members_without_checkins)} người)</h2>
+                <div class="alert alert-warning">
+                    <strong>Cần nhắc nhở:</strong> Những nhân viên này cần thực hiện checkin thường xuyên.
+                </div>
+                {checkins_table}
+            </div>
+            """
+        
+        if members_with_goals_no_checkins:
+            html_content += f"""
+            <div class="section">
+                <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
+                <div class="alert alert-warning">
+                    <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
+                </div>
+                {goals_no_checkins_table}
+            </div>
+            """
+        
+        if top_performers:
+            html_content += f"""
+            <div class="section">
+                <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT</h2>
+                {top_performers_table}
+            </div>
+            """
+        
+        if issue_performers:
+            html_content += f"""
+            <div class="section">
+                <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ</h2>
+                <div class="alert alert-warning">
+                    <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
+                </div>
+                {issue_performers_table}
+            </div>
+            """
+        
+        html_content += """
+            <div class="footer">
+                <p><strong>A Plus Mineral Material Corporation</strong></p>
+                <p>Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
+                <p><em>Đây là email tự động, vui lòng không trả lời email này.</em></p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html_content
+
+    def _generate_table_html(self, data, headers, fields):
+        """Generate HTML table from data"""
+        if not data:
+            return "<p>Không có dữ liệu</p>"
+        
+        html = "<table><thead><tr>"
+        for header in headers:
+            html += f"<th>{header}</th>"
+        html += "</tr></thead><tbody>"
+        
+        for item in data:
+            html += "<tr>"
+            for field in fields:
+                value = item.get(field, "")
+                if field == "has_goal":
+                    value = "✅ Có" if value else "❌ Không"
+                html += f"<td>{value}</td>"
+            html += "</tr>"
+        
+        html += "</tbody></table>"
+        return html
+
+    def _generate_okr_table_html(self, data):
+        """Generate HTML table for OKR data"""
+        if not data:
+            return "<p>Không có dữ liệu</p>"
+        
+        html = """
+        <table>
+            <thead>
+                <tr>
+                    <th>Nhân viên</th>
+                    <th>Dịch chuyển</th>
+                    <th>Giá trị hiện tại</th>
+                    <th>Giá trị trước đó</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+        
+        for item in data:
+            shift_class = "positive" if item['okr_shift'] > 0 else "negative" if item['okr_shift'] < 0 else "neutral"
+            shift_icon = "📈" if item['okr_shift'] > 0 else "📉" if item['okr_shift'] < 0 else "➡️"
+            
+            html += f"""
+            <tr>
+                <td>{item['user_name']}</td>
+                <td class="{shift_class}">{shift_icon} {item['okr_shift']:.2f}</td>
+                <td>{item['current_value']:.2f}</td>
+                <td>{item['last_friday_value']:.2f}</td>
+            </tr>
+            """
+        
+        html += "</tbody></table>"
+        return html
+
+    def send_email_report(self, email_from, password, email_to, subject, html_content, 
+                         company_name="A Plus Mineral Material Corporation"):
+        """Send email report"""
+        try:
+            # Create message
+            message = MIMEMultipart('alternative')
+            message['From'] = f"OKR System {company_name} <{email_from}>"
+            message['To'] = email_to
+            message['Subject'] = subject
+            
+            # Add HTML content
+            html_part = MIMEText(html_content, 'html', 'utf-8')
+            message.attach(html_part)
+            
+            # Connect to SMTP server
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(email_from, password)
+            
+            # Send email
+            server.send_message(message)
+            server.quit()
+            
+            return True, "Email sent successfully!"
+            
+        except smtplib.SMTPAuthenticationError:
+            return False, "Lỗi xác thực: Vui lòng kiểm tra lại email và mật khẩu"
+        except Exception as e:
+            return False, f"Lỗi gửi email: {str(e)}"
+
+
 # ==================== STREAMLIT APP ====================
 
 def main():
@@ -738,6 +1122,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     # Initialize analyzer
     try:
         analyzer = OKRAnalysisSystem(goal_token, account_token)
+        email_generator = EmailReportGenerator()
     except Exception as e:
         st.error(f"Failed to initialize analyzer: {e}")
         return
@@ -782,13 +1167,107 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         show_missing_analysis = st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
         auto_refresh = st.checkbox("Auto-refresh every 5 minutes", value=False)
 
+    # Email configuration
+    with st.sidebar:
+        st.subheader("📧 Email Report Settings")
+        
+        # Pre-configured email settings
+        email_from = "apluscorp.hr@gmail.com"
+        email_password = 'mems nctq yxss gruw'  # App password
+        email_to = "21522557@gm.uit.edu.vn"
+        
+        st.info("📧 Email settings are pre-configured")
+        st.text(f"From: {email_from}")
+        st.text(f"To: {email_to}")
+        
+        # Option to override email recipient
+        custom_email = st.text_input("Custom recipient (optional):", placeholder="email@example.com")
+        if custom_email.strip():
+            email_to = custom_email.strip()
+
     # Main analysis
-    if st.button("🚀 Start Analysis", type="primary", use_container_width=True):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
+    
+    with col2:
+        email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
+
+    # Run analysis
+    if analyze_button:
         run_analysis(analyzer, selected_cycle, show_detailed_debug, show_missing_analysis)
+
+    # Send email report
+    if email_button:
+        send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
     # Auto-refresh logic
     if auto_refresh:
         st.rerun()
+
+def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
+    """Send email report with analysis results"""
+    
+    st.header("📧 Sending Email Report")
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(message, progress):
+        status_text.text(message)
+        progress_bar.progress(progress)
+    
+    try:
+        # Load and process data
+        update_progress("Loading data for email report...", 0.1)
+        df = analyzer.load_and_process_data(update_progress)
+        
+        if df is None or df.empty:
+            st.error("❌ Failed to load data for email report")
+            return
+        
+        update_progress("Analyzing missing goals and checkins...", 0.4)
+        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
+        
+        update_progress("Calculating OKR shifts...", 0.6)
+        okr_shifts = analyzer.calculate_okr_shifts_by_user()
+        
+        update_progress("Generating charts...", 0.7)
+        charts = email_generator.generate_report_charts(analyzer, okr_shifts, members_without_goals, members_without_checkins)
+        
+        update_progress("Creating email content...", 0.8)
+        html_content = email_generator.create_email_content(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts, charts
+        )
+        
+        update_progress("Sending email...", 0.9)
+        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
+        
+        success, message = email_generator.send_email_report(
+            email_from, email_password, email_to, subject, html_content
+        )
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if success:
+            st.success(f"✅ {message}")
+            st.info(f"📧 Email report sent to: {email_to}")
+            
+            # Show email preview
+            if st.checkbox("📋 Show email preview", value=False):
+                st.subheader("Email Preview")
+                st.components.v1.html(html_content, height=800, scrolling=True)
+        else:
+            st.error(f"❌ {message}")
+            
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"❌ Error sending email report: {e}")
 
 def run_analysis(analyzer, selected_cycle, show_detailed_debug, show_missing_analysis):
     """Run the main analysis"""
