@@ -69,8 +69,10 @@ class OKRAnalysisSystem:
                 for m in members
             ])
             
-            # Filter out unwanted job titles
+            # Filter out unwanted job titles and specific usernames
             filtered_df = df[~df['job'].str.lower().str.contains('kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường', na=False)]
+            # Filter out specific username "ThuAn"
+            filtered_df = filtered_df[filtered_df['username'] != 'ThuAn']
             
             self.filtered_members_df = filtered_df
             return filtered_df
@@ -830,10 +832,10 @@ class EmailReportGenerator:
             'pie', 'Phân bố trạng thái OKR'
         )
         
-        checkin_chart = self.create_visual_html_chart(
-            {'Có Checkin': members_with_checkins, 'Chưa Checkin': len(members_without_checkins)},
-            'pie', 'Phân bố trạng thái Checkin'
-        )
+        # Create checkin table instead of chart
+        checkins_table = self._generate_table_html(members_without_checkins,
+                                                 ["Tên", "Username", "Chức vụ", "Có OKR"],
+                                                 ["name", "username", "job", "has_goal"])
         
         okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
         okr_shifts_chart = self.create_visual_html_chart(
@@ -844,10 +846,6 @@ class EmailReportGenerator:
         goals_table = self._generate_table_html(members_without_goals, 
                                                ["Tên", "Username", "Chức vụ"], 
                                                ["name", "username", "job"])
-        
-        checkins_table = self._generate_table_html(members_without_checkins,
-                                                 ["Tên", "Username", "Chức vụ", "Có OKR"],
-                                                 ["name", "username", "job", "has_goal"])
         
         goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
                                                           ["Tên", "Username", "Chức vụ"],
@@ -928,9 +926,9 @@ class EmailReportGenerator:
             </div>
             
             <div class="section">
-                <h2>📝 PHÂN BỐ TRẠNG THÁI CHECKIN</h2>
+                <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
                 <div class="chart-container">
-                    {checkin_chart}
+                    {checkins_table}
                 </div>
                 <div class="alert alert-info">
                     <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
@@ -968,17 +966,6 @@ class EmailReportGenerator:
                     <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
                 </div>
                 {goals_table}
-            </div>
-            """
-        
-        if members_without_checkins:
-            html_content += f"""
-            <div class="section">
-                <h2>📝 NHÂN VIÊN CHƯA CHECKIN ({len(members_without_checkins)} người)</h2>
-                <div class="alert alert-warning">
-                    <strong>Cần nhắc nhở:</strong> Những nhân viên này cần thực hiện checkin thường xuyên.
-                </div>
-                {checkins_table}
             </div>
             """
         
