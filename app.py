@@ -751,25 +751,37 @@ class EmailReportGenerator:
                 return f"<div class='chart-fallback'><h4>{title}</h4><p>Không có dữ liệu</p></div>"
             
             html = f"""
-            <div class='chart-fallback'>
-                <h4 style='text-align: center; margin-bottom: 20px;'>{title}</h4>
-                <div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>
+            <div class='modern-chart'>
+                <h3 style='text-align: center; margin-bottom: 30px; color: #2c3e50; font-size: 20px;'>{title}</h3>
+                <div style='display: flex; justify-content: center; align-items: center; gap: 40px; padding: 20px;'>
             """
             
-            colors = ['#00CC66', '#FF6B6B', '#4ECDC4', '#FFE66D', '#845EC2']
+            colors = ['#27AE60', '#E74C3C', '#3498DB', '#F39C12', '#9B59B6']
+            color_names = ['success', 'danger', 'info', 'warning', 'purple']
+            
             for i, (label, value) in enumerate(data.items()):
                 percentage = (value / total * 100) if total > 0 else 0
                 color = colors[i % len(colors)]
                 
+                # Scale circle size based on value
+                circle_size = max(100, min(140, 100 + (value / total * 40)))
+                font_size = max(20, min(28, 20 + (value / total * 8)))
+                
                 html += f"""
-                <div style='text-align: center; min-width: 120px;'>
-                    <div style='width: 80px; height: 80px; border-radius: 50%; background: {color}; 
-                                margin: 0 auto 10px auto; display: flex; align-items: center; 
-                                justify-content: center; color: white; font-weight: bold; font-size: 18px;'>
-                        {value}
+                <div style='text-align: center; flex: 1; max-width: 200px;'>
+                    <div style='width: {circle_size}px; height: {circle_size}px; border-radius: 50%; 
+                                background: linear-gradient(135deg, {color}, {color}dd); 
+                                margin: 0 auto 15px auto; display: flex; align-items: center; 
+                                justify-content: center; color: white; font-weight: bold; 
+                                font-size: {font_size}px; box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+                                border: 4px solid white; position: relative; overflow: hidden;'>
+                        <span style='z-index: 2; position: relative;'>{value}</span>
+                        <div style='position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
+                                    background: rgba(255,255,255,0.1); border-radius: 50%;'></div>
                     </div>
-                    <div style='font-weight: bold; margin-bottom: 5px;'>{label}</div>
-                    <div style='color: #666; font-size: 14px;'>{percentage:.1f}%</div>
+                    <div style='font-weight: bold; margin-bottom: 8px; color: #2c3e50; font-size: 16px;'>{label}</div>
+                    <div style='color: #7f8c8d; font-size: 14px; background: #ecf0f1; padding: 4px 12px; 
+                                border-radius: 15px; display: inline-block;'>{percentage:.1f}%</div>
                 </div>
                 """
             
@@ -778,30 +790,49 @@ class EmailReportGenerator:
             
         elif chart_type == "bar":
             if not data:
-                return f"<div class='chart-fallback'><h4>{title}</h4><p>Không có dữ liệu</p></div>"
+                return f"<div class='modern-chart'><h3>{title}</h3><p>Không có dữ liệu</p></div>"
             
             max_value = max(abs(v) for v in data.values()) if data.values() else 1
             
             html = f"""
-            <div class='chart-fallback'>
-                <h4 style='text-align: center; margin-bottom: 20px;'>{title}</h4>
-                <div style='max-height: 400px; overflow-y: auto;'>
+            <div class='modern-chart'>
+                <h3 style='text-align: center; margin-bottom: 25px; color: #2c3e50; font-size: 20px;'>{title}</h3>
+                <div style='max-height: 500px; overflow-y: auto; padding: 10px;'>
             """
             
-            for name, value in list(data.items())[:15]:  # Top 15
+            for i, (name, value) in enumerate(list(data.items())[:15]):  # Top 15
                 width_pct = (abs(value) / max_value * 100) if max_value > 0 else 0
-                color = '#00CC66' if value > 0 else '#FF6B6B' if value < 0 else '#FFE66D'
-                icon = '📈' if value > 0 else '📉' if value < 0 else '➡️'
+                
+                if value > 0:
+                    color = '#27AE60'
+                    bg_color = 'rgba(39, 174, 96, 0.1)'
+                    icon = '📈'
+                    status = 'positive'
+                elif value < 0:
+                    color = '#E74C3C'
+                    bg_color = 'rgba(231, 76, 60, 0.1)'
+                    icon = '📉'
+                    status = 'negative'
+                else:
+                    color = '#F39C12'
+                    bg_color = 'rgba(243, 156, 18, 0.1)'
+                    icon = '➡️'
+                    status = 'neutral'
                 
                 html += f"""
-                <div style='margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;'>
-                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;'>
-                        <strong>{name}</strong>
-                        <span style='color: {color}; font-weight: bold;'>{icon} {value:.2f}</span>
+                <div style='margin-bottom: 20px; padding: 15px; background: {bg_color}; 
+                            border-radius: 12px; border-left: 4px solid {color};
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.05);'>
+                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                        <strong style='color: #2c3e50; font-size: 15px;'>{name}</strong>
+                        <span style='color: {color}; font-weight: bold; font-size: 16px;'>
+                            {icon} {value:.2f}
+                        </span>
                     </div>
-                    <div style='background: #e9ecef; height: 20px; border-radius: 10px; overflow: hidden;'>
+                    <div style='background: rgba(255,255,255,0.8); height: 12px; border-radius: 6px; overflow: hidden;'>
                         <div style='background: {color}; height: 100%; width: {width_pct}%; 
-                                    border-radius: 10px; transition: width 0.3s ease;'></div>
+                                    border-radius: 6px; transition: width 0.3s ease;
+                                    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);'></div>
                     </div>
                 </div>
                 """
@@ -809,7 +840,7 @@ class EmailReportGenerator:
             html += "</div></div>"
             return html
         
-        return f"<div class='chart-fallback'><h4>{title}</h4><p>Loại biểu đồ không được hỗ trợ</p></div>"
+        return f"<div class='modern-chart'><h3>{title}</h3><p>Loại biểu đồ không được hỗ trợ</p></div>"
 
     def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
                            members_with_goals_no_checkins, okr_shifts):
@@ -864,26 +895,40 @@ class EmailReportGenerator:
         <head>
             <meta charset="UTF-8">
             <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; }}
-                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px; }}
-                .section {{ background: #f8f9fa; padding: 25px; margin: 25px 0; border-radius: 10px; border-left: 5px solid #007bff; }}
-                .metrics {{ display: flex; justify-content: space-around; margin: 20px 0; flex-wrap: wrap; }}
-                .metric {{ background: white; padding: 20px; border-radius: 8px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 150px; margin: 10px; }}
-                .metric-value {{ font-size: 28px; font-weight: bold; color: #007bff; }}
-                .metric-label {{ font-size: 14px; color: #666; margin-top: 5px; }}
-                table {{ width: 100%; border-collapse: collapse; margin: 15px 0; background: white; border-radius: 8px; overflow: hidden; }}
-                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background: #007bff; color: white; font-weight: bold; }}
-                tr:hover {{ background: #f5f5f5; }}
-                .chart-container {{ text-align: center; margin: 25px 0; }}
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
+                .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
+                .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
+                .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
+                .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
+                .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
+                .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
+                .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
+                .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
+                .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
+                table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
+                th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
+                td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
+                tr:nth-child(even) {{ background: #f8f9fa; }}
+                tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
+                .chart-container {{ text-align: center; margin: 30px 0; }}
+                .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
                 .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
-                .positive {{ color: #28a745; font-weight: bold; }}
-                .negative {{ color: #dc3545; font-weight: bold; }}
-                .neutral {{ color: #ffc107; font-weight: bold; }}
-                .footer {{ text-align: center; margin-top: 40px; padding: 20px; background: #343a40; color: white; border-radius: 10px; }}
-                .alert {{ padding: 15px; margin: 15px 0; border-radius: 5px; }}
-                .alert-warning {{ background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; }}
-                .alert-info {{ background: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }}
+                .positive {{ color: #27AE60; font-weight: bold; }}
+                .negative {{ color: #E74C3C; font-weight: bold; }}
+                .neutral {{ color: #F39C12; font-weight: bold; }}
+                .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
+                .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
+                .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
+                .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
+                .alert strong {{ font-weight: 600; }}
+                @media (max-width: 768px) {{
+                    .metrics {{ flex-direction: column; }}
+                    .modern-chart {{ padding: 20px; }}
+                    .section {{ padding: 20px; }}
+                    table {{ font-size: 12px; }}
+                    th, td {{ padding: 10px 8px; }}
+                }}
             </style>
         </head>
         <body>
@@ -1001,9 +1046,9 @@ class EmailReportGenerator:
         
         html_content += """
             <div class="footer">
-                <p><strong>A Plus Mineral Material Corporation</strong></p>
-                <p>Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
-                <p><em>Đây là email tự động, vui lòng không trả lời email này.</em></p>
+                <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
+                <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
+                <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
             </div>
         </body>
         </html>
@@ -1014,19 +1059,20 @@ class EmailReportGenerator:
     def _generate_table_html(self, data, headers, fields):
         """Generate HTML table from data"""
         if not data:
-            return "<p>Không có dữ liệu</p>"
+            return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
         
         html = "<table><thead><tr>"
         for header in headers:
             html += f"<th>{header}</th>"
         html += "</tr></thead><tbody>"
         
-        for item in data:
-            html += "<tr>"
+        for i, item in enumerate(data):
+            row_class = "even" if i % 2 == 0 else "odd"
+            html += f"<tr class='{row_class}'>"
             for field in fields:
                 value = item.get(field, "")
                 if field == "has_goal":
-                    value = "✅ Có" if value else "❌ Không"
+                    value = "<span style='color: #27AE60; font-weight: bold;'>✅ Có</span>" if value else "<span style='color: #E74C3C; font-weight: bold;'>❌ Không</span>"
                 html += f"<td>{value}</td>"
             html += "</tr>"
         
@@ -1036,31 +1082,32 @@ class EmailReportGenerator:
     def _generate_okr_table_html(self, data):
         """Generate HTML table for OKR data"""
         if not data:
-            return "<p>Không có dữ liệu</p>"
+            return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
         
         html = """
         <table>
             <thead>
                 <tr>
-                    <th>Nhân viên</th>
-                    <th>Dịch chuyển</th>
-                    <th>Giá trị hiện tại</th>
-                    <th>Giá trị trước đó</th>
+                    <th>👤 Nhân viên</th>
+                    <th>📊 Dịch chuyển</th>
+                    <th>🎯 Giá trị hiện tại</th>
+                    <th>📅 Giá trị trước đó</th>
                 </tr>
             </thead>
             <tbody>
         """
         
-        for item in data:
+        for i, item in enumerate(data):
             shift_class = "positive" if item['okr_shift'] > 0 else "negative" if item['okr_shift'] < 0 else "neutral"
             shift_icon = "📈" if item['okr_shift'] > 0 else "📉" if item['okr_shift'] < 0 else "➡️"
+            row_class = "even" if i % 2 == 0 else "odd"
             
             html += f"""
-            <tr>
-                <td>{item['user_name']}</td>
-                <td class="{shift_class}">{shift_icon} {item['okr_shift']:.2f}</td>
-                <td>{item['current_value']:.2f}</td>
-                <td>{item['last_friday_value']:.2f}</td>
+            <tr class='{row_class}'>
+                <td><strong>{item['user_name']}</strong></td>
+                <td class="{shift_class}">{shift_icon} <strong>{item['okr_shift']:.2f}</strong></td>
+                <td><span style='color: #3498db; font-weight: 600;'>{item['current_value']:.2f}</span></td>
+                <td><span style='color: #7f8c8d;'>{item['last_friday_value']:.2f}</span></td>
             </tr>
             """
         
