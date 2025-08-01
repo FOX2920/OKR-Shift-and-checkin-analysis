@@ -14,6 +14,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
+from email.mime.image import MIMEImage
 from email import encoders
 import base64
 from io import BytesIO
@@ -731,91 +732,86 @@ class EmailReportGenerator:
         self.smtp_server = smtp_server
         self.smtp_port = smtp_port
 
-    def create_chart_image(self, fig, filename="chart.png"):
-        """Convert plotly figure to base64 encoded image"""
-        img_bytes = pio.to_image(fig, format="png", width=800, height=600)
-        img_base64 = base64.b64encode(img_bytes).decode()
-        return img_base64
-
-    def generate_report_charts(self, analyzer, okr_shifts, members_without_goals, members_without_checkins):
-        """Generate charts for email report"""
-        charts = {}
-        
+    def create_chart_image(self, fig, filename="chart"):
+        """Convert plotly figure to bytes for email attachment"""
         try:
-            # 1. OKR Status Distribution Chart
-            total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-            members_with_goals = total_members - len(members_without_goals)
-            
-            goal_data = pd.DataFrame({
-                'Status': ['Có OKR', 'Chưa có OKR'],
-                'Count': [members_with_goals, len(members_without_goals)],
-                'Percentage': [
-                    (members_with_goals / total_members * 100) if total_members > 0 else 0,
-                    (len(members_without_goals) / total_members * 100) if total_members > 0 else 0
-                ]
-            })
-            
-            fig_goals = px.pie(
-                goal_data, 
-                values='Count', 
-                names='Status',
-                title="Phân bố trạng thái OKR",
-                color_discrete_map={'Có OKR': '#00CC66', 'Chưa có OKR': '#FF6B6B'}
-            )
-            charts['okr_status'] = self.create_chart_image(fig_goals)
-            
-            # 2. Checkin Status Distribution Chart
-            members_with_checkins = total_members - len(members_without_checkins)
-            checkin_data = pd.DataFrame({
-                'Status': ['Có Checkin', 'Chưa Checkin'],
-                'Count': [members_with_checkins, len(members_without_checkins)],
-                'Percentage': [
-                    (members_with_checkins / total_members * 100) if total_members > 0 else 0,
-                    (len(members_without_checkins) / total_members * 100) if total_members > 0 else 0
-                ]
-            })
-            
-            fig_checkins = px.pie(
-                checkin_data, 
-                values='Count', 
-                names='Status',
-                title="Phân bố trạng thái Checkin",
-                color_discrete_map={'Có Checkin': '#4ECDC4', 'Chưa Checkin': '#FFE66D'}
-            )
-            charts['checkin_status'] = self.create_chart_image(fig_checkins)
-            
-            # 3. OKR Shifts Chart (Top 15 users)
-            if okr_shifts:
-                okr_df = pd.DataFrame(okr_shifts[:15])  # Top 15 users
-                
-                colors = ['#FF6B6B' if shift < 0 else '#00CC66' if shift > 0 else '#FFE66D' for shift in okr_df['okr_shift']]
-                
-                fig_shifts = go.Figure()
-                fig_shifts.add_trace(go.Bar(
-                    x=okr_df['user_name'],
-                    y=okr_df['okr_shift'],
-                    marker_color=colors,
-                    text=[f"{shift:.2f}" for shift in okr_df['okr_shift']],
-                    textposition='auto'
-                ))
-                
-                fig_shifts.update_layout(
-                    title="Dịch chuyển OKR của nhân viên (Top 15)",
-                    xaxis_title="Nhân viên",
-                    yaxis_title="Mức dịch chuyển",
-                    xaxis_tickangle=45,
-                    height=600
-                )
-                charts['okr_shifts'] = self.create_chart_image(fig_shifts)
-            
+            img_bytes = pio.to_image(fig, format="png", width=800, height=600, scale=2)
+            return img_bytes
         except Exception as e:
-            st.error(f"Error generating charts: {e}")
+            st.error(f"Error creating chart image: {e}")
+            return None
+
+    def create_visual_html_chart(self, data, chart_type, title):
+        """Create HTML-based visual charts as fallback"""
+        if chart_type == "pie":
+            total = sum(data.values())
+            if total == 0:
+                return f"<div class='chart-fallback'><h4>{title}</h4><p>Không có dữ liệu</p></div>"
+            
+            html = f"""
+            <div class='chart-fallback'>
+                <h4 style='text-align: center; margin-bottom: 20px;'>{title}</h4>
+                <div style='display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;'>
+            """
+            
+            colors = ['#00CC66', '#FF6B6B', '#4ECDC4', '#FFE66D', '#845EC2']
+            for i, (label, value) in enumerate(data.items()):
+                percentage = (value / total * 100) if total > 0 else 0
+                color = colors[i % len(colors)]
+                
+                html += f"""
+                <div style='text-align: center; min-width: 120px;'>
+                    <div style='width: 80px; height: 80px; border-radius: 50%; background: {color}; 
+                                margin: 0 auto 10px auto; display: flex; align-items: center; 
+                                justify-content: center; color: white; font-weight: bold; font-size: 18px;'>
+                        {value}
+                    </div>
+                    <div style='font-weight: bold; margin-bottom: 5px;'>{label}</div>
+                    <div style='color: #666; font-size: 14px;'>{percentage:.1f}%</div>
+                </div>
+                """
+            
+            html += "</div></div>"
+            return html
+            
+        elif chart_type == "bar":
+            if not data:
+                return f"<div class='chart-fallback'><h4>{title}</h4><p>Không có dữ liệu</p></div>"
+            
+            max_value = max(abs(v) for v in data.values()) if data.values() else 1
+            
+            html = f"""
+            <div class='chart-fallback'>
+                <h4 style='text-align: center; margin-bottom: 20px;'>{title}</h4>
+                <div style='max-height: 400px; overflow-y: auto;'>
+            """
+            
+            for name, value in list(data.items())[:15]:  # Top 15
+                width_pct = (abs(value) / max_value * 100) if max_value > 0 else 0
+                color = '#00CC66' if value > 0 else '#FF6B6B' if value < 0 else '#FFE66D'
+                icon = '📈' if value > 0 else '📉' if value < 0 else '➡️'
+                
+                html += f"""
+                <div style='margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;'>
+                    <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;'>
+                        <strong>{name}</strong>
+                        <span style='color: {color}; font-weight: bold;'>{icon} {value:.2f}</span>
+                    </div>
+                    <div style='background: #e9ecef; height: 20px; border-radius: 10px; overflow: hidden;'>
+                        <div style='background: {color}; height: 100%; width: {width_pct}%; 
+                                    border-radius: 10px; transition: width 0.3s ease;'></div>
+                    </div>
+                </div>
+                """
+            
+            html += "</div></div>"
+            return html
         
-        return charts
+        return f"<div class='chart-fallback'><h4>{title}</h4><p>Loại biểu đồ không được hỗ trợ</p></div>"
 
     def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                           members_with_goals_no_checkins, okr_shifts, charts):
-        """Create HTML email content"""
+                           members_with_goals_no_checkins, okr_shifts):
+        """Create HTML email content with fallback charts"""
         
         current_date = datetime.now().strftime("%d/%m/%Y")
         total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
@@ -827,6 +823,22 @@ class EmailReportGenerator:
         progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
         stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
         issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+        
+        # Create visual charts
+        goal_chart = self.create_visual_html_chart(
+            {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
+            'pie', 'Phân bố trạng thái OKR'
+        )
+        
+        checkin_chart = self.create_visual_html_chart(
+            {'Có Checkin': members_with_checkins, 'Chưa Checkin': len(members_without_checkins)},
+            'pie', 'Phân bố trạng thái Checkin'
+        )
+        
+        okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
+        okr_shifts_chart = self.create_visual_html_chart(
+            okr_shifts_data, 'bar', 'Dịch chuyển OKR của nhân viên (Top 15)'
+        )
         
         # Generate tables
         goals_table = self._generate_table_html(members_without_goals, 
@@ -866,7 +878,7 @@ class EmailReportGenerator:
                 th {{ background: #007bff; color: white; font-weight: bold; }}
                 tr:hover {{ background: #f5f5f5; }}
                 .chart-container {{ text-align: center; margin: 25px 0; }}
-                .chart-container img {{ max-width: 100%; height: auto; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }}
+                .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
                 .positive {{ color: #28a745; font-weight: bold; }}
                 .negative {{ color: #dc3545; font-weight: bold; }}
                 .neutral {{ color: #ffc107; font-weight: bold; }}
@@ -908,7 +920,7 @@ class EmailReportGenerator:
             <div class="section">
                 <h2>🎯 PHÂN BỐ TRẠNG THÁI OKR</h2>
                 <div class="chart-container">
-                    <img src="data:image/png;base64,{charts.get('okr_status', '')}" alt="OKR Status Chart">
+                    {goal_chart}
                 </div>
                 <div class="alert alert-info">
                     <strong>Thống kê:</strong> {members_with_goals}/{total_members} nhân viên đã có OKR ({(members_with_goals/total_members*100):.1f}%)
@@ -918,7 +930,7 @@ class EmailReportGenerator:
             <div class="section">
                 <h2>📝 PHÂN BỐ TRẠNG THÁI CHECKIN</h2>
                 <div class="chart-container">
-                    <img src="data:image/png;base64,{charts.get('checkin_status', '')}" alt="Checkin Status Chart">
+                    {checkin_chart}
                 </div>
                 <div class="alert alert-info">
                     <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
@@ -928,7 +940,7 @@ class EmailReportGenerator:
             <div class="section">
                 <h2>📊 DỊCH CHUYỂN OKR</h2>
                 <div class="chart-container">
-                    <img src="data:image/png;base64,{charts.get('okr_shifts', '')}" alt="OKR Shifts Chart">
+                    {okr_shifts_chart}
                 </div>
                 <div class="metrics">
                     <div class="metric">
@@ -1070,17 +1082,21 @@ class EmailReportGenerator:
 
     def send_email_report(self, email_from, password, email_to, subject, html_content, 
                          company_name="A Plus Mineral Material Corporation"):
-        """Send email report"""
+        """Send email report with improved compatibility"""
         try:
             # Create message
-            message = MIMEMultipart('alternative')
+            message = MIMEMultipart('related')  # Changed to 'related' for better image support
             message['From'] = f"OKR System {company_name} <{email_from}>"
             message['To'] = email_to
             message['Subject'] = subject
             
+            # Create message container
+            msg_alternative = MIMEMultipart('alternative')
+            message.attach(msg_alternative)
+            
             # Add HTML content
             html_part = MIMEText(html_content, 'html', 'utf-8')
-            message.attach(html_part)
+            msg_alternative.attach(html_part)
             
             # Connect to SMTP server
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
@@ -1163,9 +1179,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     # Analysis options
     with st.sidebar:
         st.subheader("📊 Analysis Options")
-        show_detailed_debug = st.checkbox("Show Detailed Debug Info", value=False)
         show_missing_analysis = st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
-        auto_refresh = st.checkbox("Auto-refresh every 5 minutes", value=False)
 
     # Email configuration
     with st.sidebar:
@@ -1196,15 +1210,11 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
 
     # Run analysis
     if analyze_button:
-        run_analysis(analyzer, selected_cycle, show_detailed_debug, show_missing_analysis)
+        run_analysis(analyzer, selected_cycle, show_missing_analysis)
 
     # Send email report
     if email_button:
         send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
-
-    # Auto-refresh logic
-    if auto_refresh:
-        st.rerun()
 
 def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
     """Send email report with analysis results"""
@@ -1234,13 +1244,10 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         update_progress("Calculating OKR shifts...", 0.6)
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
-        update_progress("Generating charts...", 0.7)
-        charts = email_generator.generate_report_charts(analyzer, okr_shifts, members_without_goals, members_without_checkins)
-        
         update_progress("Creating email content...", 0.8)
         html_content = email_generator.create_email_content(
             analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts, charts
+            members_with_goals_no_checkins, okr_shifts
         )
         
         update_progress("Sending email...", 0.9)
@@ -1269,7 +1276,7 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         status_text.empty()
         st.error(f"❌ Error sending email report: {e}")
 
-def run_analysis(analyzer, selected_cycle, show_detailed_debug, show_missing_analysis):
+def run_analysis(analyzer, selected_cycle, show_missing_analysis):
     """Run the main analysis"""
     
     st.header(f"📊 Analysis Results for {selected_cycle['name']}")
@@ -1321,11 +1328,6 @@ def run_analysis(analyzer, selected_cycle, show_detailed_debug, show_missing_ana
             show_checkin_analysis(period_checkins, overall_checkins, analyzer.get_last_friday_date(), analyzer.get_quarter_start_date())
         else:
             st.warning("No checkin data available")
-        
-        # Debug information
-        if show_detailed_debug and okr_shifts:
-            st.subheader("🔍 Debug Information")
-            show_debug_info(analyzer, okr_shifts[:3])
         
         # Data export
         st.subheader("💾 Export Data")
@@ -1580,40 +1582,6 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     st.subheader("🏆 Most Active (Overall)")
     top_overall = overall_df.nlargest(10, 'total_checkins')[['user_name', 'total_checkins']].round(1)
     st.dataframe(top_overall, use_container_width=True)
-
-def show_debug_info(analyzer, top_users):
-    """Show debug information for top users"""
-    
-    st.info("🔍 This section shows detailed calculation breakdown for top performing users")
-    
-    for i, user_data in enumerate(top_users):
-        user_name = user_data['user_name']
-        
-        with st.expander(f"Debug: {user_name} (OKR Shift: +{user_data['okr_shift']:.2f})"):
-            try:
-                # Get user data
-                user_df = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].copy()
-                last_friday = analyzer.get_last_friday_date()
-                
-                st.write("**Current Value Calculation:**")
-                current_value = analyzer.calculate_current_value(user_df)
-                st.write(f"Current Value: {current_value:.2f} (using kr_current_value)")
-                
-                st.write("**Last Friday Value Calculation:**")
-                last_friday_value, kr_details = analyzer.calculate_last_friday_value(last_friday, user_df)
-                st.write(f"Last Friday Value: {last_friday_value:.2f} (using checkin_kr_current_value before {last_friday.strftime('%d/%m/%Y')})")
-                
-                st.write("**KR Details:**")
-                if kr_details:
-                    debug_df = pd.DataFrame(kr_details[:5])  # Show first 5 KRs
-                    st.dataframe(debug_df)
-                else:
-                    st.write("No KR details available")
-                
-                st.write(f"**Final Calculation:** {current_value:.2f} - {last_friday_value:.2f} = {current_value - last_friday_value:.2f}")
-                
-            except Exception as e:
-                st.error(f"Error in debug calculation for {user_name}: {e}")
 
 def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer):
     """Show data export options"""
