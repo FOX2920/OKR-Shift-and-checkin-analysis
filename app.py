@@ -961,16 +961,6 @@ class EmailReportGenerator:
             </div>
             
             <div class="section">
-                <h2>🎯 PHÂN BỐ TRẠNG THÁI OKR</h2>
-                <div class="chart-container">
-                    {goal_chart}
-                </div>
-                <div class="alert alert-info">
-                    <strong>Thống kê:</strong> {members_with_goals}/{total_members} nhân viên đã có OKR ({(members_with_goals/total_members*100):.1f}%)
-                </div>
-            </div>
-            
-            <div class="section">
                 <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
                 <div class="chart-container">
                     {checkins_table}
