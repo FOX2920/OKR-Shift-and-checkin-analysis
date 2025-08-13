@@ -1232,9 +1232,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     with col2:
         email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
 
-    # Run analysis
-    if analyze_button:
-        run_analysis(analyzer, selected_cycle, show_missing_analysis)
+    run_analysis(analyzer, selected_cycle, show_missing_analysis)
 
     # Send email report
     if email_button:
