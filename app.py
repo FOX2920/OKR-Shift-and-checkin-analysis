@@ -536,11 +536,15 @@ class OKRAnalysisSystem:
             st.error(f"Error calculating current value: {e}")
             return 0
 
-    def calculate_last_friday_final_goal_value(self, user_data: pd.DataFrame) -> float:
-        """Calculate last Friday final goal value with improved logic"""
+    def calculate_last_friday_final_goal_value(self, user_data: pd.DataFrame, strategy: str = "zero_fallback", show_debug: bool = False) -> float:
+        """Calculate last Friday final goal value with configurable strategies"""
         try:
             quarter_start = self.get_quarter_start_date()
             last_friday = self.get_last_friday_date()
+            
+            if show_debug:
+                st.info(f"📅 Baseline calculation range: {quarter_start.strftime('%d/%m/%Y')} to {last_friday.strftime('%d/%m/%Y')}")
+                st.info(f"🎯 Using strategy: {strategy}")
             
             # Group by unique goal names
             unique_goals = {}
@@ -554,6 +558,8 @@ class OKRAnalysisSystem:
             
             # Calculate last_friday_goal_value for each unique goal
             last_friday_goal_values = []
+            total_krs_processed = 0
+            total_krs_with_checkins = 0
             
             for goal_name, goal_data in unique_goals.items():
                 goal_df = pd.DataFrame(goal_data)
@@ -563,24 +569,39 @@ class OKRAnalysisSystem:
                 kr_baseline_values = []
                 
                 for kr_id in goal_krs:
-                    kr_baseline_value = self._calculate_kr_baseline_value(kr_id, user_data, quarter_start, last_friday)
-                    kr_baseline_values.append(kr_baseline_value)
+                    total_krs_processed += 1
+                    kr_baseline_value, has_checkin = self._calculate_kr_baseline_value(
+                        kr_id, user_data, quarter_start, last_friday, strategy, show_debug
+                    )
+                    if has_checkin:
+                        total_krs_with_checkins += 1
+                    
+                    # Apply strategy for including/excluding KRs
+                    if strategy == "strict_checkins_only":
+                        if has_checkin:
+                            kr_baseline_values.append(kr_baseline_value)
+                        # Skip KRs without checkins
+                    else:
+                        kr_baseline_values.append(kr_baseline_value)
                 
                 # Calculate average baseline value for this goal
                 if kr_baseline_values:
                     goal_baseline_value = sum(kr_baseline_values) / len(kr_baseline_values)
                     last_friday_goal_values.append(goal_baseline_value)
-                else:
-                    # No KRs found - use goal_current_value as fallback
-                    goal_current_value = goal_df.iloc[0].get('goal_current_value', 0)
-                    if pd.notna(goal_current_value):
-                        last_friday_goal_values.append(float(goal_current_value))
-                    else:
-                        last_friday_goal_values.append(0)
+                    if show_debug:
+                        st.write(f"📊 Goal '{goal_name}': baseline = {goal_baseline_value:.2f}")
+            
+            # Show summary
+            if show_debug:
+                coverage = (total_krs_with_checkins / total_krs_processed * 100) if total_krs_processed > 0 else 0
+                st.info(f"📈 Baseline calculation summary: {total_krs_with_checkins}/{total_krs_processed} KRs have checkins ({coverage:.1f}% coverage)")
             
             # Calculate final average across all goals
             if last_friday_goal_values:
-                return sum(last_friday_goal_values) / len(last_friday_goal_values)
+                final_baseline = sum(last_friday_goal_values) / len(last_friday_goal_values)
+                if show_debug:
+                    st.success(f"🎯 Final baseline value: {final_baseline:.2f}")
+                return final_baseline
             
             return 0
 
@@ -588,14 +609,15 @@ class OKRAnalysisSystem:
             st.error(f"Error calculating last Friday final goal value: {e}")
             return 0
 
-    def _calculate_kr_baseline_value(self, kr_id: str, all_data: pd.DataFrame, quarter_start: datetime, last_friday: datetime) -> float:
-        """Calculate baseline value for a specific KR"""
+    def _calculate_kr_baseline_value(self, kr_id: str, all_data: pd.DataFrame, quarter_start: datetime, 
+                                   last_friday: datetime, strategy: str, show_debug: bool) -> Tuple[float, bool]:
+        """Calculate baseline value for a specific KR with different strategies"""
         try:
             # Find all checkins for this KR within the time range
             kr_data = all_data[all_data['kr_id'] == kr_id].copy()
             
             if kr_data.empty:
-                return 0
+                return 0, False
             
             # Filter checkins within the time range
             relevant_checkins = []
@@ -624,21 +646,66 @@ class OKRAnalysisSystem:
             if relevant_checkins:
                 # Sort by date descending (latest first)
                 relevant_checkins.sort(key=lambda x: x['date'], reverse=True)
-                return relevant_checkins[0]['value']
+                baseline_value = relevant_checkins[0]['value']
+                if show_debug:
+                    st.write(f"✅ KR {kr_id}: Found baseline checkin = {baseline_value:.2f}")
+                return baseline_value, True
             else:
-                # No checkins in range - use current KR value as fallback
-                kr_current_value = kr_data.iloc[0].get('kr_current_value', 0)
-                if pd.notna(kr_current_value):
-                    return float(kr_current_value)
-                else:
-                    return 0
+                # Apply fallback strategy
+                if strategy == "zero_fallback":
+                    if show_debug:
+                        st.write(f"⚠️ KR {kr_id}: No checkins in range, using baseline = 0")
+                    return 0, False
+                
+                elif strategy == "current_value_fallback":
+                    kr_current_value = kr_data.iloc[0].get('kr_current_value', 0)
+                    fallback_value = float(kr_current_value) if pd.notna(kr_current_value) else 0
+                    if show_debug:
+                        st.write(f"⚠️ KR {kr_id}: No checkins in range, using current value = {fallback_value:.2f}")
+                    return fallback_value, False
+                
+                elif strategy == "quarter_start_checkins":
+                    # Find earliest checkin in the quarter
+                    quarter_checkins = []
+                    for _, row in kr_data.iterrows():
+                        checkin_since = row.get('checkin_since')
+                        checkin_id = row.get('checkin_id')
+                        
+                        if pd.isna(checkin_since) or pd.isna(checkin_id) or checkin_since == '' or checkin_id == '':
+                            continue
+                        
+                        try:
+                            checkin_date = pd.to_datetime(checkin_since)
+                            if checkin_date >= quarter_start:
+                                quarter_checkins.append({
+                                    'date': checkin_date,
+                                    'value': float(row.get('checkin_kr_current_value', 0))
+                                })
+                        except:
+                            continue
+                    
+                    if quarter_checkins:
+                        # Sort by date ascending (earliest first)
+                        quarter_checkins.sort(key=lambda x: x['date'])
+                        baseline_value = quarter_checkins[0]['value']
+                        if show_debug:
+                            st.write(f"🕐 KR {kr_id}: Using earliest quarter checkin = {baseline_value:.2f}")
+                        return baseline_value, True
+                    else:
+                        if show_debug:
+                            st.write(f"⚠️ KR {kr_id}: No checkins in quarter, using baseline = 0")
+                        return 0, False
+                
+                else:  # strict_checkins_only handled in parent function
+                    return 0, False
 
         except Exception as e:
-            st.warning(f"Error calculating KR baseline value for KR {kr_id}: {e}")
-            return 0
+            if show_debug:
+                st.warning(f"Error calculating KR baseline value for KR {kr_id}: {e}")
+            return 0, False
 
-    def calculate_okr_shifts_by_user(self) -> List[Dict]:
-        """Calculate OKR shifts for each user using improved logic"""
+    def calculate_okr_shifts_by_user(self, baseline_strategy: str = "zero_fallback", show_debug: bool = False) -> List[Dict]:
+        """Calculate OKR shifts for each user using configurable baseline strategy"""
         try:
             users = self.final_df['goal_user_name'].dropna().unique()
             user_okr_shifts = []
@@ -649,8 +716,8 @@ class OKRAnalysisSystem:
                 # Calculate current value (average of unique goal current values)
                 current_value = self.calculate_current_value(user_df)
                 
-                # Calculate last Friday value with improved logic
-                last_friday_value = self.calculate_last_friday_final_goal_value(user_df)
+                # Calculate last Friday value with configurable strategy
+                last_friday_value = self.calculate_last_friday_final_goal_value(user_df, baseline_strategy, show_debug)
                 
                 # Calculate OKR shift
                 okr_shift = current_value - last_friday_value
@@ -659,7 +726,8 @@ class OKRAnalysisSystem:
                     'user_name': user,
                     'current_value': round(current_value, 2),
                     'last_friday_value': round(last_friday_value, 2),
-                    'okr_shift': round(okr_shift, 2)
+                    'okr_shift': round(okr_shift, 2),
+                    'baseline_strategy': baseline_strategy
                 })
 
             return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
@@ -1246,6 +1314,31 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     with st.sidebar:
         st.subheader("📊 Analysis Options")
         show_missing_analysis = st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
+        
+        # OKR Shift calculation options
+        st.subheader("🎯 OKR Shift Calculation")
+        baseline_strategy = st.selectbox(
+            "Baseline Strategy",
+            options=[
+                "zero_fallback",
+                "strict_checkins_only", 
+                "quarter_start_checkins",
+                "current_value_fallback"
+            ],
+            index=0,
+            help="How to calculate baseline when no checkins in range"
+        )
+        
+        baseline_explanations = {
+            "zero_fallback": "🔥 RECOMMENDED: Fallback to 0 when no checkins (allows negative shifts)",
+            "strict_checkins_only": "📊 Only include KRs with actual checkins in range",
+            "quarter_start_checkins": "📅 Use earliest quarter checkins as baseline",
+            "current_value_fallback": "⚠️ Fallback to current value (original - may prevent negative shifts)"
+        }
+        
+        st.info(baseline_explanations[baseline_strategy])
+        
+        show_debug_messages = st.checkbox("Show Calculation Debug", value=False)
 
     # Email configuration
     with st.sidebar:
@@ -1275,7 +1368,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
 
     if analyze_button:
-        run_analysis(analyzer, selected_cycle, show_missing_analysis)
+        run_analysis(analyzer, selected_cycle, show_missing_analysis, baseline_strategy, show_debug_messages)
 
     # Send email report
     if email_button:
@@ -1307,7 +1400,7 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
         
         update_progress("Calculating OKR shifts...", 0.6)
-        okr_shifts = analyzer.calculate_okr_shifts_by_user()
+        okr_shifts = analyzer.calculate_okr_shifts_by_user("zero_fallback", False)  # Use recommended strategy for email
         
         update_progress("Creating email content...", 0.8)
         html_content = email_generator.create_email_content(
@@ -1341,10 +1434,13 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         status_text.empty()
         st.error(f"❌ Error sending email report: {e}")
 
-def run_analysis(analyzer, selected_cycle, show_missing_analysis):
+def run_analysis(analyzer, selected_cycle, show_missing_analysis, baseline_strategy, show_debug_messages):
     """Run the main analysis"""
     
     st.header(f"📊 Analysis Results for {selected_cycle['name']}")
+    
+    # Show strategy info
+    st.info(f"🎯 Using baseline strategy: **{baseline_strategy}** | Debug: {'ON' if show_debug_messages else 'OFF'}")
     
     # Progress tracking
     progress_bar = st.progress(0)
@@ -1377,7 +1473,7 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
         # Calculate OKR shifts
         st.subheader("🎯 OKR Shift Analysis")
         with st.spinner("Calculating OKR shifts..."):
-            okr_shifts = analyzer.calculate_okr_shifts_by_user()
+            okr_shifts = analyzer.calculate_okr_shifts_by_user(baseline_strategy, show_debug_messages)
         
         if okr_shifts:
             show_okr_analysis(okr_shifts, analyzer.get_last_friday_date())
@@ -1547,6 +1643,11 @@ def show_missing_analysis_section(analyzer):
 def show_okr_analysis(okr_shifts, last_friday):
     """Show OKR shift analysis"""
     
+    # Show strategy used
+    if okr_shifts:
+        strategy_used = okr_shifts[0].get('baseline_strategy', 'unknown')
+        st.info(f"📊 Calculated using baseline strategy: **{strategy_used}**")
+    
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
     
@@ -1562,10 +1663,17 @@ def show_okr_analysis(okr_shifts, last_friday):
         st.metric("Stable Users", stable_users, delta=f"{stable_users/len(okr_shifts)*100:.1f}%")
     
     with col3:
+        color = "normal" if issue_users == 0 else "inverse"
         st.metric("Issue Cases", issue_users, delta=f"{issue_users/len(okr_shifts)*100:.1f}%")
     
     with col4:
         st.metric("Average Shift", f"{avg_shift:.2f}", delta=None)
+    
+    # Highlight if negative shifts are possible
+    if issue_users > 0:
+        st.success(f"✅ **Negative shifts detected!** This indicates the baseline calculation is working correctly and not using circular logic.")
+    elif stable_users == len(okr_shifts):
+        st.warning("⚠️ All users have zero shift. This might indicate insufficient checkin data or baseline calculation issues.")
     
     # OKR shift chart
     okr_df = pd.DataFrame(okr_shifts)
