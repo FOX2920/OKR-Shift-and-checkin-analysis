@@ -803,20 +803,36 @@ class OKRAnalysisSystem:
     def _analyze_overall_checkins(self, all_time_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
         """Analyze overall checkin behavior"""
         overall_checkins = []
-
+        
+        # Calculate last week date range
+        today = datetime.now()
+        days_since_monday = today.weekday()
+        monday_this_week = today - timedelta(days=days_since_monday)
+        monday_last_week = monday_this_week - timedelta(days=7)
+        sunday_last_week = monday_last_week + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    
         for user in all_users:
             try:
                 user_total_checkins = all_time_df[all_time_df['goal_user_name'] == user]['checkin_id'].nunique()
                 user_total_krs = full_df[full_df['goal_user_name'] == user]['kr_id'].nunique()
                 checkin_rate = (user_total_checkins / user_total_krs * 100) if user_total_krs > 0 else 0
-
+    
                 user_checkins_dates = all_time_df[all_time_df['goal_user_name'] == user]['checkin_since_dt'].dropna()
                 first_checkin = user_checkins_dates.min() if len(user_checkins_dates) > 0 else None
                 last_checkin = user_checkins_dates.max() if len(user_checkins_dates) > 0 else None
                 days_active = (last_checkin - first_checkin).days if first_checkin and last_checkin else 0
-
+    
                 checkin_frequency = (user_total_checkins / (days_active / 7)) if days_active > 0 else 0
-
+                
+                # Calculate checkins in last week
+                user_last_week_checkins = 0
+                if len(user_checkins_dates) > 0:
+                    last_week_checkins = user_checkins_dates[
+                        (user_checkins_dates >= monday_last_week) & 
+                        (user_checkins_dates <= sunday_last_week)
+                    ]
+                    user_last_week_checkins = len(last_week_checkins)
+    
                 overall_checkins.append({
                     'user_name': user,
                     'total_checkins': user_total_checkins,
@@ -825,12 +841,13 @@ class OKRAnalysisSystem:
                     'first_checkin': first_checkin,
                     'last_checkin': last_checkin,
                     'days_active': days_active,
-                    'checkin_frequency_per_week': checkin_frequency
+                    'checkin_frequency_per_week': checkin_frequency,
+                    'last_week_checkins': user_last_week_checkins  # New field
                 })
             except Exception as e:
                 st.warning(f"Error analyzing overall checkins for {user}: {e}")
                 continue
-
+    
         return sorted(overall_checkins, key=lambda x: x['total_checkins'], reverse=True)
 
 
@@ -1707,10 +1724,71 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     )
     st.plotly_chart(fig, use_container_width=True)
     
-    # Top checkin users
+    # Top checkin users - IMPROVED SECTION
     st.subheader("🏆 Most Active (Overall)")
-    top_overall = overall_df.nlargest(10, 'total_checkins')[['user_name', 'total_checkins']].round(1)
-    st.dataframe(top_overall, use_container_width=True)
+    
+    # Calculate last week range for display
+    today = datetime.now()
+    days_since_monday = today.weekday()
+    monday_this_week = today - timedelta(days=days_since_monday)
+    monday_last_week = monday_this_week - timedelta(days=7)
+    sunday_last_week = monday_last_week + timedelta(days=6)
+    
+    st.info(f"📅 Tuần trước: {monday_last_week.strftime('%d/%m/%Y')} - {sunday_last_week.strftime('%d/%m/%Y')}")
+    
+    # Select and format columns for display
+    top_overall = overall_df.nlargest(10, 'total_checkins').copy()
+    
+    # Create display dataframe with improved formatting
+    display_df = top_overall[[
+        'user_name', 
+        'total_checkins', 
+        'checkin_frequency_per_week',
+        'last_week_checkins'
+    ]].copy()
+    
+    # Rename columns for better display
+    display_df.columns = [
+        '👤 Nhân viên',
+        '📊 Tổng checkin', 
+        '⚡ Tần suất/tuần',
+        '📅 Checkin tuần trước'
+    ]
+    
+    # Round numeric values
+    display_df['⚡ Tần suất/tuần'] = display_df['⚡ Tần suất/tuần'].round(2)
+    
+    # Display with improved styling
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "👤 Nhân viên": st.column_config.TextColumn("👤 Nhân viên", width="medium"),
+            "📊 Tổng checkin": st.column_config.NumberColumn("📊 Tổng checkin", width="small"),
+            "⚡ Tần suất/tuần": st.column_config.NumberColumn("⚡ Tần suất/tuần", format="%.2f", width="small"),
+            "📅 Checkin tuần trước": st.column_config.NumberColumn("📅 Checkin tuần trước", width="small")
+        }
+    )
+    
+    # Add summary metrics for last week activity
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        total_last_week = overall_df['last_week_checkins'].sum()
+        st.metric("🗓️ Tổng checkin tuần trước", total_last_week)
+    
+    with col2:
+        active_last_week = len(overall_df[overall_df['last_week_checkins'] > 0])
+        st.metric("👥 Người hoạt động tuần trước", active_last_week)
+    
+    with col3:
+        avg_last_week = overall_df['last_week_checkins'].mean()
+        st.metric("📈 Trung bình/người tuần trước", f"{avg_last_week:.1f}")
+    
+    with col4:
+        max_last_week = overall_df['last_week_checkins'].max()
+        st.metric("🏆 Cao nhất tuần trước", max_last_week)
 
 def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer):
     """Show data export options"""
