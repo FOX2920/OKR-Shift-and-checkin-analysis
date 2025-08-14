@@ -31,67 +31,203 @@ st.set_page_config(
 )
 
 class OKRAnalysisSystem:
-    """OKR Analysis System for Streamlit"""
+    """OKR Analysis System for Streamlit - Google Sheets Integration"""
 
-    def __init__(self, goal_access_token: str, account_access_token: str):
-        self.goal_access_token = goal_access_token
-        self.account_access_token = account_access_token
-        self.checkin_path = None
+    def __init__(self, apps_script_url: str):
+        self.apps_script_url = apps_script_url
         self.final_df = None
         self.filtered_members_df = None
+        self.cycles_df = None
+        self.goals_df = None
+        self.krs_df = None
+        self.checkins_df = None
+        self.analysis_df = None
+        self.insights_df = None
 
-    def get_filtered_members(self) -> pd.DataFrame:
-        """Get filtered members from account API"""
+    def fetch_sheet_data(self, sheet_name: str) -> pd.DataFrame:
+        """Fetch data from specific Google Sheet via Apps Script"""
         try:
-            url = "https://account.base.vn/extapi/v1/group/get"
-            data = {
-                "access_token": self.account_access_token,
-                "path": "aplus"
+            # Call Apps Script endpoint with sheet parameter
+            params = {
+                'action': 'getSheetData',
+                'sheet': sheet_name
             }
             
-            response = requests.post(url, data=data, timeout=30)
+            response = requests.get(self.apps_script_url, params=params, timeout=30)
             response.raise_for_status()
-            response_data = response.json()
             
-            # Get members from response
-            group = response_data.get('group', {})
-            members = group.get('members', [])
+            data = response.json()
             
-            # Convert to DataFrame with email field
-            df = pd.DataFrame([
-                {
-                    'id': str(m.get('id', '')),
-                    'name': m.get('name', ''),
-                    'username': m.get('username', ''),
-                    'job': m.get('title', ''),
-                    'email': m.get('email', '')  # Added email field
-                }
-                for m in members
-            ])
+            if 'error' in data:
+                st.error(f"Apps Script Error for {sheet_name}: {data['error']}")
+                return pd.DataFrame()
             
-            # Filter out unwanted job titles and specific usernames
-            filtered_df = df[~df['job'].str.lower().str.contains('kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường', na=False)]
-            # Filter out specific username "ThuAn"
-            filtered_df = filtered_df[filtered_df['username'] != 'ThuAn']
+            # Check if data exists
+            if 'data' not in data or not data['data']:
+                st.warning(f"No data found for sheet: {sheet_name}")
+                return pd.DataFrame()
             
-            self.filtered_members_df = filtered_df
-            return filtered_df
+            # Convert to DataFrame
+            df = pd.DataFrame(data['data'][1:], columns=data['data'][0])  # First row is headers
+            
+            return df
             
         except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching account members: {e}")
+            st.error(f"Error fetching {sheet_name} data: {e}")
             return pd.DataFrame()
         except Exception as e:
-            st.error(f"Unexpected error getting members: {e}")
+            st.error(f"Unexpected error fetching {sheet_name}: {e}")
             return pd.DataFrame()
 
-    def convert_timestamp_to_datetime(self, timestamp) -> Optional[str]:
-        """Convert timestamp to datetime string"""
-        if timestamp is None or timestamp == '' or timestamp == 0:
-            return None
+    def refresh_google_sheets_data(self) -> bool:
+        """Trigger data refresh in Google Sheets via Apps Script"""
         try:
-            return datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S')
-        except (ValueError, TypeError):
+            # Call Apps Script endpoint to refresh data
+            params = {
+                'action': 'refreshData'
+            }
+            
+            response = requests.get(self.apps_script_url, params=params, timeout=120)  # Longer timeout for refresh
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if 'error' in data:
+                st.error(f"Apps Script Refresh Error: {data['error']}")
+                return False
+            
+            if data.get('success'):
+                st.success("✅ Google Sheets data refreshed successfully!")
+                return True
+            else:
+                st.warning("⚠️ Data refresh completed but status unclear")
+                return True
+                
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error refreshing data: {e}")
+            return False
+        except Exception as e:
+            st.error(f"Unexpected error during refresh: {e}")
+            return False
+
+    def get_cycles_list(self) -> List[Dict]:
+        """Get list of cycles from Google Sheets"""
+        try:
+            cycles_df = self.fetch_sheet_data('Cycles')
+            if cycles_df.empty:
+                return []
+            
+            cycles_list = []
+            for _, row in cycles_df.iterrows():
+                cycles_list.append({
+                    'name': row.get('name', ''),
+                    'path': row.get('path', ''),
+                    'formatted_start_time': row.get('formatted_start_time', ''),
+                    'start_time': row.get('start_time', '')
+                })
+            
+            return cycles_list
+            
+        except Exception as e:
+            st.error(f"Error processing cycles data: {e}")
+            return []
+
+    def get_filtered_members(self) -> pd.DataFrame:
+        """Get filtered members from Google Sheets"""
+        try:
+            members_df = self.fetch_sheet_data('Members')
+            self.filtered_members_df = members_df
+            return members_df
+            
+        except Exception as e:
+            st.error(f"Error getting filtered members: {e}")
+            return pd.DataFrame()
+
+    def load_all_sheets_data(self, progress_callback=None):
+        """Load all data from Google Sheets"""
+        try:
+            sheets_to_load = [
+                ('Cycles', 'cycles_df'),
+                ('Members', 'filtered_members_df'), 
+                ('Goals', 'goals_df'),
+                ('KRs', 'krs_df'),
+                ('Checkins', 'checkins_df'),
+                ('Final_Dataset', 'final_df'),
+                ('Analysis', 'analysis_df'),
+                ('Insights', 'insights_df')
+            ]
+            
+            total_sheets = len(sheets_to_load)
+            
+            for i, (sheet_name, attr_name) in enumerate(sheets_to_load):
+                if progress_callback:
+                    progress = (i + 1) / total_sheets
+                    progress_callback(f"Loading {sheet_name}...", progress)
+                
+                df = self.fetch_sheet_data(sheet_name)
+                setattr(self, attr_name, df)
+                
+                # Clean and convert data types for specific sheets
+                if sheet_name == 'Final_Dataset' and not df.empty:
+                    self._clean_final_data()
+                elif sheet_name == 'Analysis' and not df.empty:
+                    self._clean_analysis_data()
+                elif sheet_name == 'Insights' and not df.empty:
+                    self._clean_insights_data()
+            
+            if progress_callback:
+                progress_callback("Data loading completed!", 1.0)
+            
+            return self.final_df
+            
+        except Exception as e:
+            st.error(f"Error loading sheets data: {e}")
             return None
+
+    def _clean_final_data(self):
+        """Clean final dataset"""
+        try:
+            if self.final_df is not None and not self.final_df.empty:
+                # Convert numeric columns
+                numeric_columns = ['goal_current_value', 'kr_current_value', 'checkin_kr_current_value']
+                for col in numeric_columns:
+                    if col in self.final_df.columns:
+                        self.final_df[col] = pd.to_numeric(self.final_df[col], errors='coerce').fillna(0)
+                
+                # Handle empty strings
+                self.final_df = self.final_df.replace('', np.nan)
+                
+        except Exception as e:
+            st.warning(f"Error cleaning final data: {e}")
+
+    def _clean_analysis_data(self):
+        """Clean analysis dataset"""
+        try:
+            if self.analysis_df is not None and not self.analysis_df.empty:
+                # Convert numeric columns
+                numeric_columns = ['goal_current_value', 'kr_current_value', 'checkin_kr_current_value', 'last_friday_checkin_value']
+                for col in numeric_columns:
+                    if col in self.analysis_df.columns:
+                        self.analysis_df[col] = pd.to_numeric(self.analysis_df[col], errors='coerce').fillna(0)
+                
+                # Handle empty strings
+                self.analysis_df = self.analysis_df.replace('', np.nan)
+                
+        except Exception as e:
+            st.warning(f"Error cleaning analysis data: {e}")
+
+    def _clean_insights_data(self):
+        """Clean insights dataset"""
+        try:
+            if self.insights_df is not None and not self.insights_df.empty:
+                # Convert numeric columns
+                numeric_columns = ['final_goal_value', 'last_friday_final_goal_value', 'checkin_count']
+                for col in numeric_columns:
+                    if col in self.insights_df.columns:
+                        self.insights_df[col] = pd.to_numeric(self.insights_df[col], errors='coerce').fillna(0)
+                
+        except Exception as e:
+            st.warning(f"Error cleaning insights data: {e}")
 
     def get_last_friday_date(self) -> datetime:
         """Get last Friday date"""
@@ -109,10 +245,7 @@ class OKRAnalysisSystem:
             days_to_subtract = day_of_week + 3  # Days since last Friday
         
         last_friday = today - timedelta(days=days_to_subtract)
-        
-        # Set to end of day for last Friday
         last_friday = last_friday.replace(hour=23, minute=59, second=59, microsecond=999000)
-        
         return last_friday
 
     def get_quarter_start_date(self) -> datetime:
@@ -122,263 +255,43 @@ class OKRAnalysisSystem:
         quarter_start_month = (quarter - 1) * 3 + 1
         return datetime(today.year, quarter_start_month, 1)
 
-    def get_cycle_list(self) -> List[Dict]:
-        """Get list of quarterly cycles sorted by most recent first"""
-        url = "https://goal.base.vn/extapi/v1/cycle/list"
-        payload = {'access_token': self.goal_access_token}
-
-        try:
-            response = requests.post(url, data=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
-            quarterly_cycles = []
-            for cycle in data.get('cycles', []):
-                if cycle.get('metatype') == 'quarterly':
-                    try:
-                        start_time = datetime.fromtimestamp(float(cycle['start_time']), tz=timezone.utc)
-                        quarterly_cycles.append({
-                            'name': cycle['name'],
-                            'path': cycle['path'],
-                            'start_time': start_time,
-                            'formatted_start_time': start_time.strftime('%d/%m/%Y')
-                        })
-                    except (ValueError, TypeError) as e:
-                        st.warning(f"Error parsing cycle {cycle.get('name', 'Unknown')}: {e}")
-                        continue
-
-            return sorted(quarterly_cycles, key=lambda x: x['start_time'], reverse=True)
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching cycle list: {e}")
-            return []
-        except Exception as e:
-            st.error(f"Unexpected error: {e}")
-            return []
-
-    def get_account_users(self) -> pd.DataFrame:
-        """Get users from Account API"""
-        url = "https://account.base.vn/extapi/v1/users"
-        data = {"access_token": self.account_access_token}
-
-        try:
-            response = requests.post(url, data=data, timeout=30)
-            response.raise_for_status()
-            json_response = response.json()
-            
-            if isinstance(json_response, list) and len(json_response) > 0:
-                json_response = json_response[0]
-
-            account_users = json_response.get('users', [])
-            return pd.DataFrame([{
-                'id': str(user['id']),
-                'name': user['name'],
-                'username': user['username']
-            } for user in account_users])
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching account users: {e}")
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Unexpected error getting users: {e}")
-            return pd.DataFrame()
-
-    def get_goals_data(self) -> pd.DataFrame:
-        """Get goals data from API"""
-        url = "https://goal.base.vn/extapi/v1/cycle/get.full"
-        payload = {'access_token': self.goal_access_token, 'path': self.checkin_path}
-
-        try:
-            response = requests.post(url, data=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
-            goals_data = []
-            for goal in data.get('goals', []):
-                goal_data = {
-                    'goal_id': goal.get('id'),
-                    'goal_name': goal.get('name', 'Unknown Goal'),
-                    'goal_content': goal.get('content', ''),
-                    'goal_since': self.convert_timestamp_to_datetime(goal.get('since')),
-                    'goal_current_value': goal.get('current_value', 0),
-                    'goal_user_id': str(goal.get('user_id', '')),
-                }
-                goals_data.append(goal_data)
-
-            return pd.DataFrame(goals_data)
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching goals data: {e}")
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Unexpected error getting goals: {e}")
-            return pd.DataFrame()
-
-    def get_krs_data(self) -> pd.DataFrame:
-        """Get KRs data from API with pagination"""
-        url = "https://goal.base.vn/extapi/v1/cycle/krs"
-        all_krs = []
-        page = 1
-        max_pages = 50  # Safety limit
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        while page <= max_pages:
-            status_text.text(f"Loading KRs... Page {page}")
-            data = {"access_token": self.goal_access_token, "path": self.checkin_path, "page": page}
-
-            try:
-                response = requests.post(url, data=data, timeout=30)
-                response.raise_for_status()
-                response_data = response.json()
-
-                if isinstance(response_data, list) and len(response_data) > 0:
-                    response_data = response_data[0]
-
-                krs_list = response_data.get("krs", [])
-                if not krs_list:
-                    break
-
-                for kr in krs_list:
-                    kr_data = {
-                        'kr_id': str(kr.get('id', '')),
-                        'kr_name': kr.get('name', 'Unknown KR'),
-                        'kr_content': kr.get('content', ''),
-                        'kr_since': self.convert_timestamp_to_datetime(kr.get('since')),
-                        'kr_current_value': kr.get('current_value', 0),
-                        'kr_user_id': str(kr.get('user_id', '')),
-                        'goal_id': kr.get('goal_id'),
-                    }
-                    all_krs.append(kr_data)
-
-                progress_bar.progress(min(page / 10, 1.0))
-                page += 1
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"Error at page {page}: {e}")
-                break
-            except Exception as e:
-                st.error(f"Unexpected error at page {page}: {e}")
-                break
-
-        progress_bar.empty()
-        status_text.empty()
-        return pd.DataFrame(all_krs)
-
-    def get_all_checkins(self) -> List[Dict]:
-        """Get all checkins with pagination"""
-        url = "https://goal.base.vn/extapi/v1/cycle/checkins"
-        all_checkins = []
-        page = 1
-        max_pages = 100  # Safety limit
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        while page <= max_pages:
-            status_text.text(f"Loading checkins... Page {page}")
-            data = {"access_token": self.goal_access_token, "path": self.checkin_path, "page": page}
-
-            try:
-                response = requests.post(url, data=data, timeout=30)
-                response.raise_for_status()
-                response_data = response.json()
-
-                if isinstance(response_data, list) and len(response_data) > 0:
-                    response_data = response_data[0]
-
-                checkins = response_data.get('checkins', [])
-                if not checkins:
-                    break
-
-                all_checkins.extend(checkins)
-                progress_bar.progress(min(page / 20, 1.0))
-
-                if len(checkins) < 20:  # Last page typically has fewer items
-                    break
-
-                page += 1
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"Error loading checkins at page {page}: {e}")
-                break
-            except Exception as e:
-                st.error(f"Unexpected error loading checkins at page {page}: {e}")
-                break
-
-        progress_bar.empty()
-        status_text.empty()
-        return all_checkins
-
-    def extract_checkin_data(self, all_checkins: List[Dict]) -> pd.DataFrame:
-        """Extract checkin data into DataFrame"""
-        checkin_list = []
-
-        for checkin in all_checkins:
-            try:
-                checkin_id = checkin.get('id', '')
-                checkin_name = checkin.get('name', '')
-                user_id = str(checkin.get('user_id', ''))
-                since_timestamp = checkin.get('since', '')
-
-                # Convert timestamp
-                if since_timestamp:
-                    try:
-                        since_date = datetime.fromtimestamp(int(since_timestamp)).strftime('%Y-%m-%d %H:%M:%S')
-                    except:
-                        since_date = str(since_timestamp)
-                else:
-                    since_date = ''
-
-                # Extract form value
-                form_value = ''
-                form_data = checkin.get('form', [])
-                if form_data and len(form_data) > 0:
-                    form_value = form_data[0].get('value', '')
-
-                # Extract target info
-                target_name = ''
-                kr_id = ''
-                current_value = checkin.get('current_value', 0)
-
-                obj_export = checkin.get('obj_export', {})
-                if obj_export:
-                    target_name = obj_export.get('name', '')
-                    kr_id = str(obj_export.get('id', ''))
-
-                checkin_list.append({
-                    'checkin_id': checkin_id,
-                    'checkin_name': checkin_name,
-                    'checkin_since': since_date,
-                    'cong_viec_tiep_theo': form_value,
-                    'checkin_target_name': target_name,
-                    'checkin_kr_current_value': current_value,
-                    'kr_id': kr_id,
-                    'checkin_user_id': user_id
-                })
-            except Exception as e:
-                st.warning(f"Error processing checkin {checkin.get('id', 'Unknown')}: {e}")
-                continue
-
-        return pd.DataFrame(checkin_list)
-
     def analyze_missing_goals_and_checkins(self) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-        """Analyze members without goals and without checkins"""
+        """Analyze members without goals and without checkins using Google Sheets data"""
         try:
-            if self.filtered_members_df is None or self.final_df is None:
+            if self.filtered_members_df is None or self.filtered_members_df.empty:
+                return [], [], []
+            
+            if self.final_df is None or self.final_df.empty:
                 return [], [], []
 
-            # Get users with goals
-            users_with_goals = set(self.final_df['goal_user_name'].dropna().unique())
+            # Get users with goals from final dataset
+            users_with_goals = set()
+            if 'goal_user_name' in self.final_df.columns:
+                users_with_goals = set(self.final_df['goal_user_name'].dropna().unique())
             
-            # Get users with checkins (anyone who has made at least one checkin)
+            # Get users with checkins from final dataset  
             users_with_checkins = set()
-            if 'checkin_user_id' in self.final_df.columns:
-                # Map user IDs to names for checkins
-                user_id_to_name = dict(zip(self.filtered_members_df['id'], self.filtered_members_df['name']))
+            if 'checkin_user_id' in self.final_df.columns and 'goal_user_id' in self.final_df.columns:
+                # Create mapping from user_id to user_name using members data
+                user_id_to_name = {}
+                if 'id' in self.filtered_members_df.columns and 'name' in self.filtered_members_df.columns:
+                    user_id_to_name = dict(zip(self.filtered_members_df['id'], self.filtered_members_df['name']))
+                
+                # Get checkin user IDs and map to names
                 checkin_user_ids = self.final_df['checkin_user_id'].dropna().unique()
-                users_with_checkins = {user_id_to_name.get(uid, uid) for uid in checkin_user_ids if uid in user_id_to_name}
+                users_with_checkins = {user_id_to_name.get(str(uid), str(uid)) for uid in checkin_user_ids if str(uid) in user_id_to_name}
+            
+            # Alternative: check if checkin_name exists (simpler approach)
+            if 'checkin_name' in self.final_df.columns and 'goal_user_name' in self.final_df.columns:
+                checkin_data = self.final_df[
+                    (self.final_df['checkin_name'].notna()) & 
+                    (self.final_df['checkin_name'] != '') &
+                    (self.final_df['goal_user_name'].notna())
+                ]
+                users_with_checkins.update(checkin_data['goal_user_name'].unique())
             
             # Get all filtered members
-            all_members = set(self.filtered_members_df['name'].unique())
+            all_members = set(self.filtered_members_df['name'].unique()) if 'name' in self.filtered_members_df.columns else set()
             
             # Find missing groups
             members_without_goals = []
@@ -386,7 +299,11 @@ class OKRAnalysisSystem:
             members_with_goals_no_checkins = []
             
             for member_name in all_members:
-                member_info = self.filtered_members_df[self.filtered_members_df['name'] == member_name].iloc[0].to_dict()
+                member_info = self.filtered_members_df[self.filtered_members_df['name'] == member_name]
+                if member_info.empty:
+                    continue
+                    
+                member_info = member_info.iloc[0].to_dict()
                 
                 has_goal = member_name in users_with_goals
                 has_checkin = member_name in users_with_checkins
@@ -396,7 +313,7 @@ class OKRAnalysisSystem:
                         'name': member_name,
                         'username': member_info.get('username', ''),
                         'job': member_info.get('job', ''),
-                        'email': member_info.get('email', ''),  # Added email field
+                        'email': member_info.get('email', ''),
                         'id': member_info.get('id', '')
                     })
                 
@@ -405,7 +322,7 @@ class OKRAnalysisSystem:
                         'name': member_name,
                         'username': member_info.get('username', ''),
                         'job': member_info.get('job', ''),
-                        'email': member_info.get('email', ''),  # Added email field
+                        'email': member_info.get('email', ''),
                         'id': member_info.get('id', ''),
                         'has_goal': has_goal
                     })
@@ -415,7 +332,7 @@ class OKRAnalysisSystem:
                         'name': member_name,
                         'username': member_info.get('username', ''),
                         'job': member_info.get('job', ''),
-                        'email': member_info.get('email', ''),  # Added email field
+                        'email': member_info.get('email', ''),
                         'id': member_info.get('id', '')
                     })
             
@@ -425,338 +342,70 @@ class OKRAnalysisSystem:
             st.error(f"Error analyzing missing goals and checkins: {e}")
             return [], [], []
 
-    def load_and_process_data(self, progress_callback=None):
-        """Main function to load and process all data"""
+    def get_okr_shifts_from_insights(self) -> List[Dict]:
+        """Get OKR shifts data from Insights sheet"""
         try:
-            if progress_callback:
-                progress_callback("Loading filtered members...", 0.05)
+            if self.insights_df is None or self.insights_df.empty:
+                st.warning("No insights data available")
+                return []
             
-            # Load filtered members first
-            filtered_members = self.get_filtered_members()
-            if filtered_members.empty:
-                st.error("Failed to load filtered members data")
-                return None
-
-            if progress_callback:
-                progress_callback("Loading users...", 0.1)
+            okr_shifts = []
             
-            # Load users
-            users_df = self.get_account_users()
-            if users_df.empty:
-                st.error("Failed to load users data")
-                return None
-            
-            user_id_to_name = dict(zip(users_df['id'], users_df['name']))
-
-            if progress_callback:
-                progress_callback("Loading goals...", 0.2)
-            
-            # Load Goals
-            goals_df = self.get_goals_data()
-            if goals_df.empty:
-                st.error("Failed to load goals data")
-                return None
-
-            if progress_callback:
-                progress_callback("Loading KRs...", 0.4)
-            
-            # Load KRs
-            krs_df = self.get_krs_data()
-
-            if progress_callback:
-                progress_callback("Loading checkins...", 0.6)
-            
-            # Load Checkins
-            all_checkins = self.get_all_checkins()
-            checkin_df = self.extract_checkin_data(all_checkins)
-
-            if progress_callback:
-                progress_callback("Processing data...", 0.8)
-
-            # Join all data
-            joined_df = goals_df.merge(krs_df, on='goal_id', how='left')
-            joined_df['goal_user_name'] = joined_df['goal_user_id'].map(user_id_to_name)
-            self.final_df = joined_df.merge(checkin_df, on='kr_id', how='left')
-
-            # Clean data
-            self._clean_final_data()
-
-            if progress_callback:
-                progress_callback("Data processing completed!", 1.0)
-
-            return self.final_df
-
-        except Exception as e:
-            st.error(f"Error in data processing: {e}")
-            return None
-
-    def _clean_final_data(self):
-        """Clean and prepare final dataset"""
-        try:
-            # Fill NaN values
-            self.final_df['kr_current_value'] = pd.to_numeric(self.final_df['kr_current_value'], errors='coerce').fillna(0.00)
-            self.final_df['checkin_kr_current_value'] = pd.to_numeric(self.final_df['checkin_kr_current_value'], errors='coerce').fillna(0.00)
-
-            # Fill dates
-            self.final_df['kr_since'] = self.final_df['kr_since'].fillna(self.final_df['goal_since'])
-            self.final_df['checkin_since'] = self.final_df['checkin_since'].fillna(self.final_df['kr_since'])
-
-            # Drop unused columns
-            columns_to_drop = ['goal_user_id', 'kr_user_id']
-            existing_columns_to_drop = [col for col in columns_to_drop if col in self.final_df.columns]
-            if existing_columns_to_drop:
-                self.final_df = self.final_df.drop(columns=existing_columns_to_drop)
-
-        except Exception as e:
-            st.error(f"Error cleaning data: {e}")
-
-    def calculate_current_value(self, df: pd.DataFrame = None) -> float:
-        """Calculate current OKR value (average of unique goal current values)"""
-        if df is None:
-            df = self.final_df
-
-        try:
-            # Group by unique goal names and get their current values
-            unique_goals = {}
-            
-            for _, row in df.iterrows():
-                goal_name = row.get('goal_name')
-                goal_current_value = row.get('goal_current_value')
+            for _, row in self.insights_df.iterrows():
+                user_name = row.get('goal_user_name', '')
+                final_goal_value = float(row.get('final_goal_value', 0))
+                last_friday_value = float(row.get('last_friday_final_goal_value', 0))
+                checkin_count = int(row.get('checkin_count', 0))
                 
-                if goal_name and pd.notna(goal_name) and pd.notna(goal_current_value):
-                    unique_goals[goal_name] = float(goal_current_value)
-            
-            if unique_goals:
-                goal_values = list(unique_goals.values())
-                return sum(goal_values) / len(goal_values)
-            
-            return 0
-
-        except Exception as e:
-            st.error(f"Error calculating current value: {e}")
-            return 0
-
-    def calculate_last_friday_final_goal_value(self, user_data: pd.DataFrame, strategy: str = "zero_fallback", show_debug: bool = False) -> float:
-        """Calculate last Friday final goal value with configurable strategies"""
-        try:
-            quarter_start = self.get_quarter_start_date()
-            last_friday = self.get_last_friday_date()
-            
-            if show_debug:
-                st.info(f"📅 Baseline calculation range: {quarter_start.strftime('%d/%m/%Y')} to {last_friday.strftime('%d/%m/%Y')}")
-                st.info(f"🎯 Using strategy: {strategy}")
-            
-            # Group by unique goal names
-            unique_goals = {}
-            
-            for _, row in user_data.iterrows():
-                goal_name = row.get('goal_name')
-                if goal_name and pd.notna(goal_name):
-                    if goal_name not in unique_goals:
-                        unique_goals[goal_name] = []
-                    unique_goals[goal_name].append(row)
-            
-            # Calculate last_friday_goal_value for each unique goal
-            last_friday_goal_values = []
-            total_krs_processed = 0
-            total_krs_with_checkins = 0
-            
-            for goal_name, goal_data in unique_goals.items():
-                goal_df = pd.DataFrame(goal_data)
+                okr_shift = final_goal_value - last_friday_value
                 
-                # Get all KRs for this goal
-                goal_krs = goal_df['kr_id'].dropna().unique()
-                kr_baseline_values = []
-                
-                for kr_id in goal_krs:
-                    total_krs_processed += 1
-                    kr_baseline_value, has_checkin = self._calculate_kr_baseline_value(
-                        kr_id, user_data, quarter_start, last_friday, strategy, show_debug
-                    )
-                    if has_checkin:
-                        total_krs_with_checkins += 1
-                    
-                    # Apply strategy for including/excluding KRs
-                    if strategy == "strict_checkins_only":
-                        if has_checkin:
-                            kr_baseline_values.append(kr_baseline_value)
-                        # Skip KRs without checkins
-                    else:
-                        kr_baseline_values.append(kr_baseline_value)
-                
-                # Calculate average baseline value for this goal
-                if kr_baseline_values:
-                    goal_baseline_value = sum(kr_baseline_values) / len(kr_baseline_values)
-                    last_friday_goal_values.append(goal_baseline_value)
-                    if show_debug:
-                        st.write(f"📊 Goal '{goal_name}': baseline = {goal_baseline_value:.2f}")
-            
-            # Show summary
-            if show_debug:
-                coverage = (total_krs_with_checkins / total_krs_processed * 100) if total_krs_processed > 0 else 0
-                st.info(f"📈 Baseline calculation summary: {total_krs_with_checkins}/{total_krs_processed} KRs have checkins ({coverage:.1f}% coverage)")
-            
-            # Calculate final average across all goals
-            if last_friday_goal_values:
-                final_baseline = sum(last_friday_goal_values) / len(last_friday_goal_values)
-                if show_debug:
-                    st.success(f"🎯 Final baseline value: {final_baseline:.2f}")
-                return final_baseline
-            
-            return 0
-
-        except Exception as e:
-            st.error(f"Error calculating last Friday final goal value: {e}")
-            return 0
-
-    def _calculate_kr_baseline_value(self, kr_id: str, all_data: pd.DataFrame, quarter_start: datetime, 
-                                   last_friday: datetime, strategy: str, show_debug: bool) -> Tuple[float, bool]:
-        """Calculate baseline value for a specific KR with different strategies"""
-        try:
-            # Find all checkins for this KR within the time range
-            kr_data = all_data[all_data['kr_id'] == kr_id].copy()
-            
-            if kr_data.empty:
-                return 0, False
-            
-            # Filter checkins within the time range
-            relevant_checkins = []
-            
-            for _, row in kr_data.iterrows():
-                checkin_since = row.get('checkin_since')
-                checkin_id = row.get('checkin_id')
-                
-                # Skip if no checkin data
-                if pd.isna(checkin_since) or pd.isna(checkin_id) or checkin_since == '' or checkin_id == '':
-                    continue
-                
-                try:
-                    checkin_date = pd.to_datetime(checkin_since)
-                    
-                    # Check if checkin is within range (quarter start to last Friday)
-                    if quarter_start <= checkin_date <= last_friday:
-                        relevant_checkins.append({
-                            'date': checkin_date,
-                            'value': float(row.get('checkin_kr_current_value', 0))
-                        })
-                except:
-                    continue
-            
-            # If we have checkins in the range, return the latest one's value
-            if relevant_checkins:
-                # Sort by date descending (latest first)
-                relevant_checkins.sort(key=lambda x: x['date'], reverse=True)
-                baseline_value = relevant_checkins[0]['value']
-                if show_debug:
-                    st.write(f"✅ KR {kr_id}: Found baseline checkin = {baseline_value:.2f}")
-                return baseline_value, True
-            else:
-                # Apply fallback strategy
-                if strategy == "zero_fallback":
-                    if show_debug:
-                        st.write(f"⚠️ KR {kr_id}: No checkins in range, using baseline = 0")
-                    return 0, False
-                
-                elif strategy == "current_value_fallback":
-                    kr_current_value = kr_data.iloc[0].get('kr_current_value', 0)
-                    fallback_value = float(kr_current_value) if pd.notna(kr_current_value) else 0
-                    if show_debug:
-                        st.write(f"⚠️ KR {kr_id}: No checkins in range, using current value = {fallback_value:.2f}")
-                    return fallback_value, False
-                
-                elif strategy == "quarter_start_checkins":
-                    # Find earliest checkin in the quarter
-                    quarter_checkins = []
-                    for _, row in kr_data.iterrows():
-                        checkin_since = row.get('checkin_since')
-                        checkin_id = row.get('checkin_id')
-                        
-                        if pd.isna(checkin_since) or pd.isna(checkin_id) or checkin_since == '' or checkin_id == '':
-                            continue
-                        
-                        try:
-                            checkin_date = pd.to_datetime(checkin_since)
-                            if checkin_date >= quarter_start:
-                                quarter_checkins.append({
-                                    'date': checkin_date,
-                                    'value': float(row.get('checkin_kr_current_value', 0))
-                                })
-                        except:
-                            continue
-                    
-                    if quarter_checkins:
-                        # Sort by date ascending (earliest first)
-                        quarter_checkins.sort(key=lambda x: x['date'])
-                        baseline_value = quarter_checkins[0]['value']
-                        if show_debug:
-                            st.write(f"🕐 KR {kr_id}: Using earliest quarter checkin = {baseline_value:.2f}")
-                        return baseline_value, True
-                    else:
-                        if show_debug:
-                            st.write(f"⚠️ KR {kr_id}: No checkins in quarter, using baseline = 0")
-                        return 0, False
-                
-                else:  # strict_checkins_only handled in parent function
-                    return 0, False
-
-        except Exception as e:
-            if show_debug:
-                st.warning(f"Error calculating KR baseline value for KR {kr_id}: {e}")
-            return 0, False
-
-    def calculate_okr_shifts_by_user(self, baseline_strategy: str = "zero_fallback", show_debug: bool = False) -> List[Dict]:
-        """Calculate OKR shifts for each user using configurable baseline strategy"""
-        try:
-            users = self.final_df['goal_user_name'].dropna().unique()
-            user_okr_shifts = []
-
-            for user in users:
-                user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
-                
-                # Calculate current value (average of unique goal current values)
-                current_value = self.calculate_current_value(user_df)
-                
-                # Calculate last Friday value with configurable strategy
-                last_friday_value = self.calculate_last_friday_final_goal_value(user_df, baseline_strategy, show_debug)
-                
-                # Calculate OKR shift
-                okr_shift = current_value - last_friday_value
-
-                user_okr_shifts.append({
-                    'user_name': user,
-                    'current_value': round(current_value, 2),
+                okr_shifts.append({
+                    'user_name': user_name,
+                    'current_value': round(final_goal_value, 2),
                     'last_friday_value': round(last_friday_value, 2),
                     'okr_shift': round(okr_shift, 2),
-                    'baseline_strategy': baseline_strategy
+                    'checkin_count': checkin_count,
+                    'baseline_strategy': 'from_google_sheets'
                 })
-
-            return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
-
+            
+            # Sort by OKR shift descending
+            return sorted(okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
+            
         except Exception as e:
-            st.error(f"Error calculating OKR shifts: {e}")
+            st.error(f"Error getting OKR shifts from insights: {e}")
             return []
 
-    def analyze_checkin_behavior(self) -> Tuple[List[Dict], List[Dict]]:
-        """Analyze checkin behavior"""
+    def analyze_checkin_behavior_from_analysis(self) -> Tuple[List[Dict], List[Dict]]:
+        """Analyze checkin behavior using Analysis sheet data"""
         try:
+            if self.analysis_df is None or self.analysis_df.empty:
+                return [], []
+
             last_friday = self.get_last_friday_date()
             quarter_start = self.get_quarter_start_date()
 
-            df = self.final_df.copy()
-            df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
+            df = self.analysis_df.copy()
+            
+            # Convert checkin_since to datetime
+            if 'checkin_since' in df.columns:
+                df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
+            else:
+                df['checkin_since_dt'] = pd.NaT
 
             # Filter period data
             mask_period = (df['checkin_since_dt'] >= quarter_start) & (df['checkin_since_dt'] <= last_friday)
             period_df = df[mask_period].copy()
 
-            # Filter all-time checkin data
-            all_time_df = df[df['checkin_id'].notna()].copy()
-
-            all_users = df['goal_user_name'].dropna().unique()
+            # Get all users
+            all_users = []
+            if 'goal_user_name' in df.columns:
+                all_users = df['goal_user_name'].dropna().unique()
 
             # Period analysis
-            period_checkins = self._analyze_period_checkins(period_df, all_users, df)
-            overall_checkins = self._analyze_overall_checkins(all_time_df, all_users, df)
+            period_checkins = self._analyze_period_checkins_sheets(period_df, all_users, df)
+            
+            # Overall analysis
+            overall_checkins = self._analyze_overall_checkins_sheets(df, all_users)
 
             return period_checkins, overall_checkins
 
@@ -764,27 +413,28 @@ class OKRAnalysisSystem:
             st.error(f"Error analyzing checkin behavior: {e}")
             return [], []
 
-    def _analyze_period_checkins(self, period_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
-        """Analyze checkins in the reference period"""
+    def _analyze_period_checkins_sheets(self, period_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
+        """Analyze checkins in the reference period using sheets data"""
         period_checkins = []
 
         for user in all_users:
             try:
-                user_period_checkins = period_df[
+                # Count unique checkins in period
+                user_period_data = period_df[
                     (period_df['goal_user_name'] == user) &
                     (period_df['checkin_name'].notna()) &
                     (period_df['checkin_name'] != '')
-                ]['checkin_id'].nunique()
-
-                user_krs_in_period = period_df[period_df['goal_user_name'] == user]['kr_id'].nunique()
+                ]
+                
+                user_period_checkins = user_period_data['checkin_id'].nunique() if 'checkin_id' in user_period_data.columns else len(user_period_data)
+                
+                # Count user's KRs in period
+                user_krs_in_period = period_df[period_df['goal_user_name'] == user]['kr_id'].nunique() if 'kr_id' in period_df.columns else 0
+                
                 checkin_rate = (user_period_checkins / user_krs_in_period * 100) if user_krs_in_period > 0 else 0
 
-                user_checkin_dates = period_df[
-                    (period_df['goal_user_name'] == user) &
-                    (period_df['checkin_name'].notna()) &
-                    (period_df['checkin_name'] != '')
-                ]['checkin_since_dt'].dropna()
-
+                # Get checkin dates
+                user_checkin_dates = user_period_data['checkin_since_dt'].dropna()
                 first_checkin_period = user_checkin_dates.min() if len(user_checkin_dates) > 0 else None
                 last_checkin_period = user_checkin_dates.max() if len(user_checkin_dates) > 0 else None
 
@@ -797,23 +447,33 @@ class OKRAnalysisSystem:
                     'last_checkin_period': last_checkin_period,
                     'days_between_checkins': (last_checkin_period - first_checkin_period).days if first_checkin_period and last_checkin_period else 0
                 })
+                
             except Exception as e:
                 st.warning(f"Error analyzing period checkins for {user}: {e}")
                 continue
 
         return sorted(period_checkins, key=lambda x: x['checkin_count_period'], reverse=True)
 
-    def _analyze_overall_checkins(self, all_time_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
-        """Analyze overall checkin behavior"""
+    def _analyze_overall_checkins_sheets(self, df: pd.DataFrame, all_users: List[str]) -> List[Dict]:
+        """Analyze overall checkin behavior using sheets data"""
         overall_checkins = []
 
         for user in all_users:
             try:
-                user_total_checkins = all_time_df[all_time_df['goal_user_name'] == user]['checkin_id'].nunique()
-                user_total_krs = full_df[full_df['goal_user_name'] == user]['kr_id'].nunique()
+                # Get user's all checkins
+                user_checkins_data = df[
+                    (df['goal_user_name'] == user) &
+                    (df['checkin_name'].notna()) &
+                    (df['checkin_name'] != '')
+                ]
+                
+                user_total_checkins = user_checkins_data['checkin_id'].nunique() if 'checkin_id' in user_checkins_data.columns else len(user_checkins_data)
+                user_total_krs = df[df['goal_user_name'] == user]['kr_id'].nunique() if 'kr_id' in df.columns else 0
+                
                 checkin_rate = (user_total_checkins / user_total_krs * 100) if user_total_krs > 0 else 0
 
-                user_checkins_dates = all_time_df[all_time_df['goal_user_name'] == user]['checkin_since_dt'].dropna()
+                # Get checkin dates
+                user_checkins_dates = user_checkins_data['checkin_since_dt'].dropna()
                 first_checkin = user_checkins_dates.min() if len(user_checkins_dates) > 0 else None
                 last_checkin = user_checkins_dates.max() if len(user_checkins_dates) > 0 else None
                 days_active = (last_checkin - first_checkin).days if first_checkin and last_checkin else 0
@@ -830,6 +490,7 @@ class OKRAnalysisSystem:
                     'days_active': days_active,
                     'checkin_frequency_per_week': checkin_frequency
                 })
+                
             except Exception as e:
                 st.warning(f"Error analyzing overall checkins for {user}: {e}")
                 continue
@@ -867,13 +528,11 @@ class EmailReportGenerator:
             """
             
             colors = ['#27AE60', '#E74C3C', '#3498DB', '#F39C12', '#9B59B6']
-            color_names = ['success', 'danger', 'info', 'warning', 'purple']
             
             for i, (label, value) in enumerate(data.items()):
                 percentage = (value / total * 100) if total > 0 else 0
                 color = colors[i % len(colors)]
                 
-                # Scale circle size based on value
                 circle_size = max(100, min(140, 100 + (value / total * 40)))
                 font_size = max(20, min(28, 20 + (value / total * 8)))
                 
@@ -910,24 +569,21 @@ class EmailReportGenerator:
                 <div style='max-height: 500px; overflow-y: auto; padding: 10px;'>
             """
             
-            for i, (name, value) in enumerate(list(data.items())[:15]):  # Top 15
+            for i, (name, value) in enumerate(list(data.items())[:15]):
                 width_pct = (abs(value) / max_value * 100) if max_value > 0 else 0
                 
                 if value > 0:
                     color = '#27AE60'
                     bg_color = 'rgba(39, 174, 96, 0.1)'
                     icon = '📈'
-                    status = 'positive'
                 elif value < 0:
                     color = '#E74C3C'
                     bg_color = 'rgba(231, 76, 60, 0.1)'
                     icon = '📉'
-                    status = 'negative'
                 else:
                     color = '#F39C12'
                     bg_color = 'rgba(243, 156, 18, 0.1)'
                     icon = '➡️'
-                    status = 'neutral'
                 
                 html += f"""
                 <div style='margin-bottom: 20px; padding: 15px; background: {bg_color}; 
@@ -1045,7 +701,7 @@ class EmailReportGenerator:
             <div class="header">
                 <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
                 <h2>{selected_cycle['name']}</h2>
-                <p>Ngày báo cáo: {current_date}</p>
+                <p>Ngày báo cáo: {current_date} | Dữ liệu từ Google Sheets</p>
             </div>
             
             <div class="section">
@@ -1147,7 +803,7 @@ class EmailReportGenerator:
         html_content += """
             <div class="footer">
                 <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
-                <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
+                <p>📊 Báo cáo được tạo tự động từ Google Sheets via Apps Script</p>
                 <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
             </div>
         </body>
@@ -1192,6 +848,7 @@ class EmailReportGenerator:
                     <th>📊 Dịch chuyển</th>
                     <th>🎯 Giá trị hiện tại</th>
                     <th>📅 Giá trị trước đó</th>
+                    <th>📝 Checkins</th>
                 </tr>
             </thead>
             <tbody>
@@ -1208,6 +865,7 @@ class EmailReportGenerator:
                 <td class="{shift_class}">{shift_icon} <strong>{item['okr_shift']:.2f}</strong></td>
                 <td><span style='color: #3498db; font-weight: 600;'>{item['current_value']:.2f}</span></td>
                 <td><span style='color: #7f8c8d;'>{item['last_friday_value']:.2f}</span></td>
+                <td><span style='color: #9b59b6;'>{item.get('checkin_count', 0)}</span></td>
             </tr>
             """
         
@@ -1219,7 +877,7 @@ class EmailReportGenerator:
         """Send email report with improved compatibility"""
         try:
             # Create message
-            message = MIMEMultipart('related')  # Changed to 'related' for better image support
+            message = MIMEMultipart('related')
             message['From'] = f"OKR System {company_name} <{email_from}>"
             message['To'] = email_to
             message['Subject'] = subject
@@ -1253,25 +911,15 @@ class EmailReportGenerator:
 
 def main():
     st.title("🎯 OKR & Checkin Analysis Dashboard")
+    st.markdown("### 📊 Google Sheets Integration")
     st.markdown("---")
 
-    # Get API tokens from environment variables
-    goal_token = os.getenv("GOAL_ACCESS_TOKEN")
-    account_token = os.getenv("ACCOUNT_ACCESS_TOKEN")
-
-    # Check if tokens are available
-    if not goal_token or not account_token:
-        st.error("❌ API tokens not found in environment variables. Please set GOAL_ACCESS_TOKEN and ACCOUNT_ACCESS_TOKEN.")
-        st.info("Make sure to set the following environment variables:")
-        st.code("""
-GOAL_ACCESS_TOKEN=your_goal_token_here
-ACCOUNT_ACCESS_TOKEN=your_account_token_here
-        """)
-        return
+    # Apps Script URL
+    apps_script_url = "https://script.google.com/macros/s/AKfycbzcy2Iye1UfZjlv1hMG1pOkpZVvz6h5MqvqakiaBYxdBQrwzY9BtSD27_A6pEXD9V9DjQ/exec"
 
     # Initialize analyzer
     try:
-        analyzer = OKRAnalysisSystem(goal_token, account_token)
+        analyzer = OKRAnalysisSystem(apps_script_url)
         email_generator = EmailReportGenerator()
     except Exception as e:
         st.error(f"Failed to initialize analyzer: {e}")
@@ -1281,64 +929,72 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # Show token status
-        st.subheader("🔑 API Token Status")
-        st.success("✅ Goal Access Token: Loaded")
-        st.success("✅ Account Access Token: Loaded")
+        # Show connection status
+        st.subheader("🔗 Google Sheets Connection")
+        st.success("✅ Apps Script URL: Connected")
+        st.code(apps_script_url, language=None)
 
-    # Get cycles
-    with st.spinner("🔄 Loading available cycles..."):
-        cycles = analyzer.get_cycle_list()
+        # Data refresh section
+        st.subheader("🔄 Data Management")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Refresh Sheets Data", help="Trigger Google Sheets to fetch fresh data from APIs"):
+                with st.spinner("Refreshing Google Sheets data..."):
+                    success = analyzer.refresh_google_sheets_data()
+                    if success:
+                        st.rerun()  # Reload the app to show fresh data
+        
+        with col2:
+            if st.button("📊 Load Current Data", help="Load data from current Google Sheets"):
+                st.rerun()
+
+    # Get cycles from Google Sheets
+    with st.spinner("🔄 Loading cycles from Google Sheets..."):
+        cycles = analyzer.get_cycles_list()
 
     if not cycles:
-        st.error("❌ Could not load cycles. Please check your API tokens and connection.")
+        st.error("❌ Could not load cycles from Google Sheets. Please check the connection and ensure data is available.")
+        
+        # Show troubleshooting info
+        with st.expander("🔧 Troubleshooting"):
+            st.markdown("""
+            **Possible issues:**
+            1. Google Sheets data hasn't been populated yet
+            2. Apps Script endpoint is not responding
+            3. Network connectivity issues
+            
+            **Solutions:**
+            1. Click "Refresh Sheets Data" to fetch fresh data
+            2. Check if the Google Apps Script is running properly
+            3. Ensure the Google Sheets contains data in the 'Cycles' sheet
+            """)
         return
 
     # Cycle selection
     with st.sidebar:
         st.subheader("📅 Cycle Selection")
-        cycle_options = {f"{cycle['name']} ({cycle['formatted_start_time']})": cycle for cycle in cycles}
-        selected_cycle_name = st.selectbox(
-            "Select Cycle",
-            options=list(cycle_options.keys()),
-            index=0,  # Default to first (latest) cycle
-            help="Choose the quarterly cycle to analyze"
-        )
-        
-        selected_cycle = cycle_options[selected_cycle_name]
-        analyzer.checkin_path = selected_cycle['path']
-        
-        st.info(f"🎯 **Selected Cycle:**\n\n**{selected_cycle['name']}**\n\nPath: `{selected_cycle['path']}`\n\nStart: {selected_cycle['formatted_start_time']}")
+        if cycles:
+            cycle_options = {f"{cycle['name']} ({cycle['formatted_start_time']})": cycle for cycle in cycles}
+            selected_cycle_name = st.selectbox(
+                "Select Cycle",
+                options=list(cycle_options.keys()),
+                index=0,
+                help="Choose the quarterly cycle to analyze"
+            )
+            
+            selected_cycle = cycle_options[selected_cycle_name]
+            
+            st.info(f"🎯 **Selected Cycle:**\n\n**{selected_cycle['name']}**\n\nPath: `{selected_cycle['path']}`\n\nStart: {selected_cycle['formatted_start_time']}")
+        else:
+            st.error("No cycles available")
+            selected_cycle = None
 
     # Analysis options
     with st.sidebar:
         st.subheader("📊 Analysis Options")
         show_missing_analysis = st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
-        
-        # OKR Shift calculation options
-        st.subheader("🎯 OKR Shift Calculation")
-        baseline_strategy = st.selectbox(
-            "Baseline Strategy",
-            options=[
-                "zero_fallback",
-                "strict_checkins_only", 
-                "quarter_start_checkins",
-                "current_value_fallback"
-            ],
-            index=0,
-            help="How to calculate baseline when no checkins in range"
-        )
-        
-        baseline_explanations = {
-            "zero_fallback": "🔥 RECOMMENDED: Fallback to 0 when no checkins (allows negative shifts)",
-            "strict_checkins_only": "📊 Only include KRs with actual checkins in range",
-            "quarter_start_checkins": "📅 Use earliest quarter checkins as baseline",
-            "current_value_fallback": "⚠️ Fallback to current value (original - may prevent negative shifts)"
-        }
-        
-        st.info(baseline_explanations[baseline_strategy])
-        
-        show_debug_messages = st.checkbox("Show Calculation Debug", value=False)
+        show_raw_data = st.checkbox("Show Raw Data Tables", value=False)
 
     # Email configuration
     with st.sidebar:
@@ -1346,7 +1002,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         
         # Pre-configured email settings
         email_from = "apluscorp.hr@gmail.com"
-        email_password = 'mems nctq yxss gruw'  # App password
+        email_password = 'mems nctq yxss gruw'
         email_to = "xnk3@apluscorp.vn"
         
         st.info("📧 Email settings are pre-configured")
@@ -1359,23 +1015,23 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
             email_to = custom_email.strip()
 
     # Main analysis
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
-    
-    with col2:
-        email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
+    if selected_cycle:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
+        
+        with col2:
+            email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
 
-    if analyze_button:
-        run_analysis(analyzer, selected_cycle, show_missing_analysis, baseline_strategy, show_debug_messages)
+        if analyze_button:
+            run_analysis_from_sheets(analyzer, selected_cycle, show_missing_analysis, show_raw_data)
 
-    # Send email report
-    if email_button:
-        send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
+        if email_button:
+            send_email_report_from_sheets(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
-def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
-    """Send email report with analysis results"""
+def send_email_report_from_sheets(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
+    """Send email report using Google Sheets data"""
     
     st.header("📧 Sending Email Report")
     
@@ -1388,19 +1044,19 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         progress_bar.progress(progress)
     
     try:
-        # Load and process data
-        update_progress("Loading data for email report...", 0.1)
-        df = analyzer.load_and_process_data(update_progress)
+        # Load data from Google Sheets
+        update_progress("Loading data from Google Sheets...", 0.2)
+        df = analyzer.load_all_sheets_data(update_progress)
         
-        if df is None or df.empty:
-            st.error("❌ Failed to load data for email report")
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            st.error("❌ Failed to load data from Google Sheets for email report")
             return
         
-        update_progress("Analyzing missing goals and checkins...", 0.4)
+        update_progress("Analyzing missing goals and checkins...", 0.6)
         members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
         
-        update_progress("Calculating OKR shifts...", 0.6)
-        okr_shifts = analyzer.calculate_okr_shifts_by_user("zero_fallback", False)  # Use recommended strategy for email
+        update_progress("Getting OKR shifts from Insights sheet...", 0.7)
+        okr_shifts = analyzer.get_okr_shifts_from_insights()
         
         update_progress("Creating email content...", 0.8)
         html_content = email_generator.create_email_content(
@@ -1434,13 +1090,11 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         status_text.empty()
         st.error(f"❌ Error sending email report: {e}")
 
-def run_analysis(analyzer, selected_cycle, show_missing_analysis, baseline_strategy, show_debug_messages):
-    """Run the main analysis"""
+def run_analysis_from_sheets(analyzer, selected_cycle, show_missing_analysis, show_raw_data):
+    """Run analysis using Google Sheets data"""
     
     st.header(f"📊 Analysis Results for {selected_cycle['name']}")
-    
-    # Show strategy info
-    st.info(f"🎯 Using baseline strategy: **{baseline_strategy}** | Debug: {'ON' if show_debug_messages else 'OFF'}")
+    st.info("🔗 **Data Source:** Google Sheets via Apps Script")
     
     # Progress tracking
     progress_bar = st.progress(0)
@@ -1450,49 +1104,53 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis, baseline_strat
         status_text.text(message)
         progress_bar.progress(progress)
     
-    # Load data
+    # Load all data from sheets
     try:
-        df = analyzer.load_and_process_data(update_progress)
+        df = analyzer.load_all_sheets_data(update_progress)
         
-        if df is None or df.empty:
-            st.error("❌ Failed to load data. Please check your API tokens and try again.")
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            st.error("❌ Failed to load data from Google Sheets. Please check the connection and data availability.")
             return
             
         progress_bar.empty()
         status_text.empty()
         
         # Show data summary
-        show_data_summary(df, analyzer)
+        show_data_summary_from_sheets(analyzer)
         
         # Show missing goals and checkins analysis if enabled
         if show_missing_analysis:
             st.subheader("🚨 Missing Goals & Checkins Analysis")
             with st.spinner("Analyzing missing goals and checkins..."):
-                show_missing_analysis_section(analyzer)
+                show_missing_analysis_from_sheets(analyzer)
         
-        # Calculate OKR shifts
-        st.subheader("🎯 OKR Shift Analysis")
-        with st.spinner("Calculating OKR shifts..."):
-            okr_shifts = analyzer.calculate_okr_shifts_by_user(baseline_strategy, show_debug_messages)
+        # Show OKR shifts from Insights sheet
+        st.subheader("🎯 OKR Shift Analysis (from Insights Sheet)")
+        with st.spinner("Loading OKR shifts from Insights sheet..."):
+            okr_shifts = analyzer.get_okr_shifts_from_insights()
         
         if okr_shifts:
-            show_okr_analysis(okr_shifts, analyzer.get_last_friday_date())
+            show_okr_analysis_from_sheets(okr_shifts, analyzer.get_last_friday_date())
         else:
-            st.warning("No OKR shift data available")
+            st.warning("No OKR shift data available from Insights sheet")
         
-        # Analyze checkin behavior
-        st.subheader("📝 Checkin Behavior Analysis")
+        # Analyze checkin behavior from Analysis sheet
+        st.subheader("📝 Checkin Behavior Analysis (from Analysis Sheet)")
         with st.spinner("Analyzing checkin behavior..."):
-            period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+            period_checkins, overall_checkins = analyzer.analyze_checkin_behavior_from_analysis()
         
         if period_checkins and overall_checkins:
-            show_checkin_analysis(period_checkins, overall_checkins, analyzer.get_last_friday_date(), analyzer.get_quarter_start_date())
+            show_checkin_analysis_from_sheets(period_checkins, overall_checkins, analyzer.get_last_friday_date(), analyzer.get_quarter_start_date())
         else:
-            st.warning("No checkin data available")
+            st.warning("No checkin data available from Analysis sheet")
+        
+        # Show raw data if enabled
+        if show_raw_data:
+            show_raw_data_tables(analyzer)
         
         # Data export
         st.subheader("💾 Export Data")
-        show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer)
+        show_export_options_from_sheets(analyzer, okr_shifts, period_checkins, overall_checkins)
         
         st.success("✅ Analysis completed successfully!")
         
@@ -1501,34 +1159,58 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis, baseline_strat
         progress_bar.empty()
         status_text.empty()
 
-def show_data_summary(df, analyzer):
-    """Show data summary statistics"""
-    st.subheader("📈 Data Summary")
+def show_data_summary_from_sheets(analyzer):
+    """Show data summary from Google Sheets"""
+    st.subheader("📈 Data Summary (from Google Sheets)")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    
+    # Get metrics from different sheets
+    total_goals = 0
+    total_krs = 0 
+    total_checkins = 0
+    total_users = 0
+    total_filtered_members = 0
+    total_insights = 0
+    
+    if analyzer.goals_df is not None and not analyzer.goals_df.empty:
+        total_goals = len(analyzer.goals_df)
+    
+    if analyzer.krs_df is not None and not analyzer.krs_df.empty:
+        total_krs = len(analyzer.krs_df)
+    
+    if analyzer.checkins_df is not None and not analyzer.checkins_df.empty:
+        total_checkins = len(analyzer.checkins_df)
+    
+    if analyzer.final_df is not None and not analyzer.final_df.empty and 'goal_user_name' in analyzer.final_df.columns:
+        total_users = analyzer.final_df['goal_user_name'].nunique()
+    
+    if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+        total_filtered_members = len(analyzer.filtered_members_df)
+    
+    if analyzer.insights_df is not None and not analyzer.insights_df.empty:
+        total_insights = len(analyzer.insights_df)
     
     with col1:
-        total_goals = df['goal_id'].nunique()
         st.metric("Total Goals", total_goals)
     
     with col2:
-        total_krs = df['kr_id'].nunique()
         st.metric("Total KRs", total_krs)
     
     with col3:
-        total_checkins = df['checkin_id'].nunique()
         st.metric("Total Checkins", total_checkins)
     
     with col4:
-        total_users = df['goal_user_name'].nunique()
-        st.metric("Total Users", total_users)
+        st.metric("Active Users", total_users)
     
     with col5:
-        total_filtered_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
         st.metric("Filtered Members", total_filtered_members)
+    
+    with col6:
+        st.metric("Insights Records", total_insights)
 
-def show_missing_analysis_section(analyzer):
-    """Show missing goals and checkins analysis"""
+def show_missing_analysis_from_sheets(analyzer):
+    """Show missing analysis using Google Sheets data"""
     
     # Get the analysis data
     members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
@@ -1536,8 +1218,9 @@ def show_missing_analysis_section(analyzer):
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
     
+    total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+    
     with col1:
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
         st.metric("Total Filtered Members", total_members)
     
     with col2:
@@ -1555,7 +1238,7 @@ def show_missing_analysis_section(analyzer):
         goals_no_checkins_pct = (goals_no_checkins_count / total_members * 100) if total_members > 0 else 0
         st.metric("Has Goals but No Checkins", goals_no_checkins_count, delta=f"{goals_no_checkins_pct:.1f}%")
     
-    # Visual representation with tables below each chart
+    # Visual representation
     st.subheader("📊 Missing Analysis Visualization")
     
     col1, col2 = st.columns(2)
@@ -1577,17 +1260,17 @@ def show_missing_analysis_section(analyzer):
         )
         st.plotly_chart(fig_goals, use_container_width=True)
         
-        # Members Without Goals table below the goals chart
+        # Members Without Goals table
         st.subheader("🚫 Members Without Goals")
         if members_without_goals:
             no_goals_df = pd.DataFrame(members_without_goals)
             st.dataframe(
-                no_goals_df[['name', 'username', 'job', 'email']],  # Added email to display
+                no_goals_df[['name', 'username', 'job', 'email']],
                 use_container_width=True,
                 height=300
             )
             
-            # Download button for members without goals
+            # Download button
             csv_no_goals = no_goals_df.to_csv(index=False)
             st.download_button(
                 label="📥 Download Members Without Goals",
@@ -1616,14 +1299,14 @@ def show_missing_analysis_section(analyzer):
         )
         st.plotly_chart(fig_checkins, use_container_width=True)
         
-        # Members with Goals but No Checkins table below the checkins chart
+        # Members with Goals but No Checkins table
         if members_with_goals_no_checkins:
             st.subheader("⚠️ Members with Goals but No Checkins")
-            st.warning("These members have set up goals but haven't made any checkins yet. They may need guidance or reminders.")
+            st.warning("These members have set up goals but haven't made any checkins yet.")
             
             goals_no_checkins_df = pd.DataFrame(members_with_goals_no_checkins)
             st.dataframe(
-                goals_no_checkins_df[['name', 'username', 'job', 'email']],  # Added email to display
+                goals_no_checkins_df[['name', 'username', 'job', 'email']],
                 use_container_width=True,
                 height=300
             )
@@ -1640,13 +1323,10 @@ def show_missing_analysis_section(analyzer):
         else:
             st.success("✅ All members with goals have made checkins!")
 
-def show_okr_analysis(okr_shifts, last_friday):
-    """Show OKR shift analysis"""
+def show_okr_analysis_from_sheets(okr_shifts, last_friday):
+    """Show OKR shift analysis from Insights sheet"""
     
-    # Show strategy used
-    if okr_shifts:
-        strategy_used = okr_shifts[0].get('baseline_strategy', 'unknown')
-        st.info(f"📊 Calculated using baseline strategy: **{strategy_used}**")
+    st.info("📊 **Data Source:** Insights sheet from Google Sheets (pre-calculated)")
     
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -1663,17 +1343,16 @@ def show_okr_analysis(okr_shifts, last_friday):
         st.metric("Stable Users", stable_users, delta=f"{stable_users/len(okr_shifts)*100:.1f}%")
     
     with col3:
-        color = "normal" if issue_users == 0 else "inverse"
         st.metric("Issue Cases", issue_users, delta=f"{issue_users/len(okr_shifts)*100:.1f}%")
     
     with col4:
-        st.metric("Average Shift", f"{avg_shift:.2f}", delta=None)
+        st.metric("Average Shift", f"{avg_shift:.2f}")
     
-    # Highlight if negative shifts are possible
+    # Status indicators
     if issue_users > 0:
-        st.success(f"✅ **Negative shifts detected!** This indicates the baseline calculation is working correctly and not using circular logic.")
+        st.success(f"✅ **Negative shifts detected!** Baseline calculation is working correctly.")
     elif stable_users == len(okr_shifts):
-        st.warning("⚠️ All users have zero shift. This might indicate insufficient checkin data or baseline calculation issues.")
+        st.warning("⚠️ All users have zero shift. Check if baseline calculation is working.")
     
     # OKR shift chart
     okr_df = pd.DataFrame(okr_shifts)
@@ -1682,36 +1361,47 @@ def show_okr_analysis(okr_shifts, last_friday):
         okr_df.head(20), 
         x='user_name', 
         y='okr_shift',
-        title=f"OKR Shifts by User (Reference: {last_friday.strftime('%d/%m/%Y')})",
+        title=f"OKR Shifts by User (from Insights Sheet)",
         color='okr_shift',
-        color_continuous_scale=['red', 'yellow', 'green']
+        color_continuous_scale=['red', 'yellow', 'green'],
+        hover_data=['current_value', 'last_friday_value', 'checkin_count']
     )
     fig.update_xaxes(tickangle=45)
     fig.update_layout(height=500)
     st.plotly_chart(fig, use_container_width=True)
     
-    # Top performers table
-    st.subheader("🏆 Top Performers")
-    top_performers = okr_df[okr_df['okr_shift'] > 0].head(10)
-    if not top_performers.empty:
-        st.dataframe(
-            top_performers[['user_name', 'okr_shift', 'current_value', 'last_friday_value']].round(2),
-            use_container_width=True
-        )
-    else:
-        st.info("No users with positive OKR shifts found")
+    # Data tables
+    col1, col2 = st.columns(2)
     
-    # Issues table
-    if issue_users > 0:
-        st.subheader("⚠️ Users with Issues")
-        issue_df = okr_df[okr_df['okr_shift'] < 0]
-        st.dataframe(
-            issue_df[['user_name', 'okr_shift', 'current_value', 'last_friday_value']].round(2),
-            use_container_width=True
-        )
+    with col1:
+        # Top performers table
+        st.subheader("🏆 Top Performers")
+        top_performers = okr_df[okr_df['okr_shift'] > 0].head(10)
+        if not top_performers.empty:
+            st.dataframe(
+                top_performers[['user_name', 'okr_shift', 'current_value', 'last_friday_value', 'checkin_count']].round(2),
+                use_container_width=True
+            )
+        else:
+            st.info("No users with positive OKR shifts found")
+    
+    with col2:
+        # Issues table
+        if issue_users > 0:
+            st.subheader("⚠️ Users with Issues")
+            issue_df = okr_df[okr_df['okr_shift'] < 0].head(10)
+            st.dataframe(
+                issue_df[['user_name', 'okr_shift', 'current_value', 'last_friday_value', 'checkin_count']].round(2),
+                use_container_width=True
+            )
+        else:
+            st.subheader("😊 No Issues Found")
+            st.success("All users have positive or stable OKR progress!")
 
-def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarter_start):
-    """Show checkin behavior analysis"""
+def show_checkin_analysis_from_sheets(period_checkins, overall_checkins, last_friday, quarter_start):
+    """Show checkin behavior analysis from Analysis sheet"""
+    
+    st.info("📊 **Data Source:** Analysis sheet from Google Sheets")
     
     period_df = pd.DataFrame(period_checkins)
     overall_df = pd.DataFrame(overall_checkins)
@@ -1723,11 +1413,11 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     
     active_users = len([u for u in period_checkins if u['checkin_count_period'] > 0])
     avg_checkins = np.mean([u['checkin_count_period'] for u in period_checkins])
-    max_checkins = max([u['checkin_count_period'] for u in period_checkins])
+    max_checkins = max([u['checkin_count_period'] for u in period_checkins]) if period_checkins else 0
     avg_rate = np.mean([u['checkin_rate_period'] for u in period_checkins])
     
     with col1:
-        st.metric("Active Users", active_users, delta=f"{active_users/len(period_checkins)*100:.1f}%")
+        st.metric("Active Users", active_users, delta=f"{active_users/len(period_checkins)*100:.1f}%" if period_checkins else "0%")
     
     with col2:
         st.metric("Avg Checkins/User", f"{avg_checkins:.1f}")
@@ -1738,77 +1428,202 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     with col4:
         st.metric("Avg Checkin Rate", f"{avg_rate:.1f}%")
     
-    # Checkin distribution chart
-    checkin_counts = [u['checkin_count_period'] for u in period_checkins]
-    
-    fig = go.Figure()
-    fig.add_trace(go.Histogram(x=checkin_counts, nbinsx=10, name="Checkin Distribution"))
-    fig.update_layout(
-        title="Distribution of Checkins per User (Period)",
-        xaxis_title="Number of Checkins",
-        yaxis_title="Number of Users",
-        height=400
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Top checkin users
-    st.subheader("🏆 Most Active (Overall)")
-    top_overall = overall_df.nlargest(10, 'total_checkins')[['user_name', 'total_checkins']].round(1)
-    st.dataframe(top_overall, use_container_width=True)
-
-def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer):
-    """Show data export options"""
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Charts
+    col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📊 Export Full Dataset"):
-            csv = df.to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name=f"okr_full_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
+        # Checkin distribution chart
+        if period_checkins:
+            checkin_counts = [u['checkin_count_period'] for u in period_checkins]
+            
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=checkin_counts, nbinsx=10, name="Checkin Distribution"))
+            fig.update_layout(
+                title="Distribution of Checkins per User (Period)",
+                xaxis_title="Number of Checkins",
+                yaxis_title="Number of Users",
+                height=400
             )
+            st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        if st.button("🎯 Export OKR Shifts"):
-            csv = pd.DataFrame(okr_shifts).to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name=f"okr_shifts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
+        # Top checkin users pie chart
+        if overall_checkins:
+            top_5_overall = overall_df.head(5)
+            
+            fig = px.pie(
+                values=top_5_overall['total_checkins'],
+                names=top_5_overall['user_name'],
+                title="Top 5 Most Active Users (Overall)"
             )
+            st.plotly_chart(fig, use_container_width=True)
     
-    with col3:
-        if st.button("📝 Export Period Checkins"):
-            csv = pd.DataFrame(period_checkins).to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name=f"period_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
+    # Data tables
+    col1, col2 = st.columns(2)
     
-    with col4:
-        if st.button("📈 Export Overall Checkins"):
-            csv = pd.DataFrame(overall_checkins).to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name=f"overall_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
+    with col1:
+        # Most active in period
+        st.subheader("🏆 Most Active (Period)")
+        if not period_df.empty:
+            top_period = period_df.nlargest(10, 'checkin_count_period')[['user_name', 'checkin_count_period', 'checkin_rate_period']].round(1)
+            st.dataframe(top_period, use_container_width=True)
     
-    with col5:
-        if st.button("👥 Export Filtered Members"):
-            if analyzer.filtered_members_df is not None:
+    with col2:
+        # Most active overall
+        st.subheader("🏆 Most Active (Overall)")
+        if not overall_df.empty:
+            top_overall = overall_df.nlargest(10, 'total_checkins')[['user_name', 'total_checkins', 'checkin_rate']].round(1)
+            st.dataframe(top_overall, use_container_width=True)
+
+def show_raw_data_tables(analyzer):
+    """Show raw data tables from Google Sheets"""
+    st.subheader("📋 Raw Data Tables")
+    
+    tabs = st.tabs(["🔄 Cycles", "👥 Members", "🎯 Goals", "📊 KRs", "📝 Checkins", "📈 Final Dataset", "🔍 Analysis", "📊 Insights"])
+    
+    with tabs[0]:  # Cycles
+        st.subheader("Cycles Data")
+        if analyzer.cycles_df is not None and not analyzer.cycles_df.empty:
+            st.dataframe(analyzer.cycles_df, use_container_width=True)
+        else:
+            st.info("No cycles data available")
+    
+    with tabs[1]:  # Members
+        st.subheader("Filtered Members Data")
+        if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+            st.dataframe(analyzer.filtered_members_df, use_container_width=True)
+        else:
+            st.info("No members data available")
+    
+    with tabs[2]:  # Goals
+        st.subheader("Goals Data")
+        if analyzer.goals_df is not None and not analyzer.goals_df.empty:
+            st.dataframe(analyzer.goals_df, use_container_width=True)
+        else:
+            st.info("No goals data available")
+    
+    with tabs[3]:  # KRs
+        st.subheader("KRs Data")
+        if analyzer.krs_df is not None and not analyzer.krs_df.empty:
+            st.dataframe(analyzer.krs_df, use_container_width=True)
+        else:
+            st.info("No KRs data available")
+    
+    with tabs[4]:  # Checkins
+        st.subheader("Checkins Data")
+        if analyzer.checkins_df is not None and not analyzer.checkins_df.empty:
+            st.dataframe(analyzer.checkins_df, use_container_width=True)
+        else:
+            st.info("No checkins data available")
+    
+    with tabs[5]:  # Final Dataset
+        st.subheader("Final Dataset")
+        if analyzer.final_df is not None and not analyzer.final_df.empty:
+            st.dataframe(analyzer.final_df, use_container_width=True)
+        else:
+            st.info("No final dataset available")
+    
+    with tabs[6]:  # Analysis
+        st.subheader("Analysis Data (Enhanced with last_friday_checkin_value)")
+        if analyzer.analysis_df is not None and not analyzer.analysis_df.empty:
+            st.info("This sheet contains deduplicated data with enhanced baseline tracking")
+            st.dataframe(analyzer.analysis_df, use_container_width=True)
+        else:
+            st.info("No analysis data available")
+    
+    with tabs[7]:  # Insights
+        st.subheader("Insights Data (User-level Metrics)")
+        if analyzer.insights_df is not None and not analyzer.insights_df.empty:
+            st.info("This sheet contains pre-calculated user-level performance metrics")
+            st.dataframe(analyzer.insights_df, use_container_width=True)
+        else:
+            st.info("No insights data available")
+
+def show_export_options_from_sheets(analyzer, okr_shifts, period_checkins, overall_checkins):
+    """Show data export options for Google Sheets data"""
+    
+    st.subheader("💾 Export Options")
+    
+    # Create columns for export buttons
+    cols = st.columns(4)
+    
+    with cols[0]:
+        if st.button("📊 Export Insights Data"):
+            if analyzer.insights_df is not None and not analyzer.insights_df.empty:
+                csv = analyzer.insights_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Insights CSV",
+                    data=csv,
+                    file_name=f"okr_insights_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    
+    with cols[1]:
+        if st.button("🔍 Export Analysis Data"):
+            if analyzer.analysis_df is not None and not analyzer.analysis_df.empty:
+                csv = analyzer.analysis_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Analysis CSV",
+                    data=csv,
+                    file_name=f"okr_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    
+    with cols[2]:
+        if st.button("📈 Export Final Dataset"):
+            if analyzer.final_df is not None and not analyzer.final_df.empty:
+                csv = analyzer.final_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Dataset CSV",
+                    data=csv,
+                    file_name=f"okr_final_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    
+    with cols[3]:
+        if st.button("👥 Export Members Data"):
+            if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
                 csv = analyzer.filtered_members_df.to_csv(index=False)
                 st.download_button(
-                    label="Download CSV",
+                    label="Download Members CSV",
                     data=csv,
                     file_name=f"filtered_members_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    
+    # Additional export options for calculated data
+    cols2 = st.columns(3)
+    
+    with cols2[0]:
+        if st.button("🎯 Export OKR Shifts"):
+            if okr_shifts:
+                csv = pd.DataFrame(okr_shifts).to_csv(index=False)
+                st.download_button(
+                    label="Download OKR Shifts CSV",
+                    data=csv,
+                    file_name=f"okr_shifts_calculated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    
+    with cols2[1]:
+        if st.button("📝 Export Period Checkins"):
+            if period_checkins:
+                csv = pd.DataFrame(period_checkins).to_csv(index=False)
+                st.download_button(
+                    label="Download Period Checkins CSV",
+                    data=csv,
+                    file_name=f"period_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+    
+    with cols2[2]:
+        if st.button("📊 Export Overall Checkins"):
+            if overall_checkins:
+                csv = pd.DataFrame(overall_checkins).to_csv(index=False)
+                st.download_button(
+                    label="Download Overall Checkins CSV",
+                    data=csv,
+                    file_name=f"overall_checkins_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv"
                 )
 
