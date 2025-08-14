@@ -862,7 +862,7 @@ def main():
     st.markdown("---")
     
     # Google Apps Script URL
-    apps_script_url = "https://script.google.com/macros/s/AKfycbzoaN14UG9SgOZNBzTbX35a-PCJGRyHPDvZNtU-AyxTSEtENReGFT5TRs-_Ua8hbmKHRw/exec"
+    apps_script_url = "https://script.google.com/macros/s/AKfycbwmRWAOSIxG3CI_rc98gcf4SHf3cA436p3japFPhzuykzYZvSUNyGsFnc6Vjl_cq1yftA/exec"
     
     # Initialize analyzer
     try:
