@@ -701,7 +701,7 @@ class OKRAnalysisSystem:
             st.error(f"Error calculating final_okr_goal_shift: {e}")
             return 0
     def calculate_okr_shifts_by_user(self) -> List[Dict]:
-    """Calculate OKR shifts for each user using the same logic as Google Apps Script"""
+        """Calculate OKR shifts for each user using the same logic as Google Apps Script"""
         try:
             users = self.final_df['goal_user_name'].dropna().unique()
             user_okr_shifts = []
