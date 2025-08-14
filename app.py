@@ -96,11 +96,24 @@ class OKRAnalysisSystem:
     def get_last_friday_date(self) -> datetime:
         """Get last Friday date"""
         today = datetime.now()
-        days_since_monday = today.weekday()
-        monday_this_week = today - timedelta(days=days_since_monday)
-        monday_last_week = monday_this_week - timedelta(days=7)
-        friday_last_week = monday_last_week + timedelta(days=4)
-        return friday_last_week
+        day_of_week = today.weekday()  # 0 = Monday, 4 = Friday, 6 = Sunday
+        
+        # Calculate days to subtract to get to last Friday
+        if day_of_week == 4:  # Today is Friday
+            days_to_subtract = 7  # Last Friday (a week ago)
+        elif day_of_week == 5:  # Today is Saturday
+            days_to_subtract = 1  # Yesterday (Friday)
+        elif day_of_week == 6:  # Today is Sunday
+            days_to_subtract = 2  # Friday before yesterday
+        else:  # Monday to Thursday
+            days_to_subtract = day_of_week + 3  # Days since last Friday
+        
+        last_friday = today - timedelta(days=days_to_subtract)
+        
+        # Set to end of day for last Friday
+        last_friday = last_friday.replace(hour=23, minute=59, second=59, microsecond=999000)
+        
+        return last_friday
 
     def get_quarter_start_date(self) -> datetime:
         """Get current quarter start date"""
@@ -498,126 +511,155 @@ class OKRAnalysisSystem:
             st.error(f"Error cleaning data: {e}")
 
     def calculate_current_value(self, df: pd.DataFrame = None) -> float:
-        """Calculate current OKR value"""
+        """Calculate current OKR value (average of unique goal current values)"""
         if df is None:
             df = self.final_df
 
         try:
-            unique_krs = df['kr_id'].dropna().unique()
-            goal_values_dict = {}
-
-            for kr_id in unique_krs:
-                kr_data = df[df['kr_id'] == kr_id].copy()
-                if len(kr_data) > 0:
-                    latest_record = kr_data.iloc[-1]
-                    goal_name = latest_record['goal_name']
-                    kr_value = pd.to_numeric(latest_record['kr_current_value'], errors='coerce')
-
-                    if pd.isna(kr_value):
-                        kr_value = 0
-
-                    if goal_name not in goal_values_dict:
-                        goal_values_dict[goal_name] = []
-                    goal_values_dict[goal_name].append(kr_value)
-
-            goal_values = []
-            for goal_name, kr_values_list in goal_values_dict.items():
-                goal_value = np.mean(kr_values_list)
-                goal_values.append(goal_value)
-
-            return np.mean(goal_values) if goal_values else 0
+            # Group by unique goal names and get their current values
+            unique_goals = {}
+            
+            for _, row in df.iterrows():
+                goal_name = row.get('goal_name')
+                goal_current_value = row.get('goal_current_value')
+                
+                if goal_name and pd.notna(goal_name) and pd.notna(goal_current_value):
+                    unique_goals[goal_name] = float(goal_current_value)
+            
+            if unique_goals:
+                goal_values = list(unique_goals.values())
+                return sum(goal_values) / len(goal_values)
+            
+            return 0
 
         except Exception as e:
             st.error(f"Error calculating current value: {e}")
             return 0
 
-    def calculate_last_friday_value(self, last_friday: datetime, df: pd.DataFrame = None) -> Tuple[float, List[Dict]]:
-        """Calculate OKR value as of last Friday"""
-        if df is None:
-            df = self.final_df
-
+    def calculate_last_friday_final_goal_value(self, user_data: pd.DataFrame) -> float:
+        """Calculate last Friday final goal value with improved logic"""
         try:
-            df = df.copy()
-            df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
-
-            unique_krs = df['kr_id'].dropna().unique()
-            goal_values_dict = {}
-            kr_details = []
-
-            for kr_id in unique_krs:
-                kr_data = df[df['kr_id'] == kr_id].copy()
-                kr_data['checkin_since_dt'] = pd.to_datetime(kr_data['checkin_since'], errors='coerce')
-
-                actual_checkins_before_friday = kr_data[
-                    (kr_data['checkin_since_dt'] <= last_friday) &
-                    (kr_data['checkin_name'].notna()) &
-                    (kr_data['checkin_name'] != '')
-                ]
-
-                goal_name = kr_data.iloc[0]['goal_name'] if len(kr_data) > 0 else f"Unknown_{kr_id}"
-
-                if len(actual_checkins_before_friday) > 0:
-                    latest_checkin_before_friday = actual_checkins_before_friday.sort_values('checkin_since_dt').iloc[-1]
-                    kr_value = pd.to_numeric(latest_checkin_before_friday['checkin_kr_current_value'], errors='coerce')
-
-                    if pd.isna(kr_value):
-                        kr_value = 0
-
-                    if goal_name not in goal_values_dict:
-                        goal_values_dict[goal_name] = []
-                    goal_values_dict[goal_name].append(kr_value)
-
-                    kr_details.append({
-                        'kr_id': kr_id,
-                        'goal_name': goal_name,
-                        'kr_value': kr_value,
-                        'checkin_date': latest_checkin_before_friday['checkin_since_dt'],
-                        'source': 'checkin_before_friday'
-                    })
+            quarter_start = self.get_quarter_start_date()
+            last_friday = self.get_last_friday_date()
+            
+            # Group by unique goal names
+            unique_goals = {}
+            
+            for _, row in user_data.iterrows():
+                goal_name = row.get('goal_name')
+                if goal_name and pd.notna(goal_name):
+                    if goal_name not in unique_goals:
+                        unique_goals[goal_name] = []
+                    unique_goals[goal_name].append(row)
+            
+            # Calculate last_friday_goal_value for each unique goal
+            last_friday_goal_values = []
+            
+            for goal_name, goal_data in unique_goals.items():
+                goal_df = pd.DataFrame(goal_data)
+                
+                # Get all KRs for this goal
+                goal_krs = goal_df['kr_id'].dropna().unique()
+                kr_baseline_values = []
+                
+                for kr_id in goal_krs:
+                    kr_baseline_value = self._calculate_kr_baseline_value(kr_id, user_data, quarter_start, last_friday)
+                    kr_baseline_values.append(kr_baseline_value)
+                
+                # Calculate average baseline value for this goal
+                if kr_baseline_values:
+                    goal_baseline_value = sum(kr_baseline_values) / len(kr_baseline_values)
+                    last_friday_goal_values.append(goal_baseline_value)
                 else:
-                    kr_value = 0
-                    goal_key = f"{goal_name}_no_checkin_{kr_id}"
-                    goal_values_dict[goal_key] = [kr_value]
-
-                    kr_details.append({
-                        'kr_id': kr_id,
-                        'goal_name': goal_name,
-                        'kr_value': kr_value,
-                        'checkin_date': None,
-                        'source': 'no_checkin_before_friday'
-                    })
-
-            goal_values = []
-            for goal_name, kr_values_list in goal_values_dict.items():
-                goal_value = np.mean(kr_values_list)
-                goal_values.append(goal_value)
-
-            last_friday_value = np.mean(goal_values) if goal_values else 0
-            return last_friday_value, kr_details
+                    # No KRs found - use goal_current_value as fallback
+                    goal_current_value = goal_df.iloc[0].get('goal_current_value', 0)
+                    if pd.notna(goal_current_value):
+                        last_friday_goal_values.append(float(goal_current_value))
+                    else:
+                        last_friday_goal_values.append(0)
+            
+            # Calculate final average across all goals
+            if last_friday_goal_values:
+                return sum(last_friday_goal_values) / len(last_friday_goal_values)
+            
+            return 0
 
         except Exception as e:
-            st.error(f"Error calculating last Friday value: {e}")
-            return 0, []
+            st.error(f"Error calculating last Friday final goal value: {e}")
+            return 0
+
+    def _calculate_kr_baseline_value(self, kr_id: str, all_data: pd.DataFrame, quarter_start: datetime, last_friday: datetime) -> float:
+        """Calculate baseline value for a specific KR"""
+        try:
+            # Find all checkins for this KR within the time range
+            kr_data = all_data[all_data['kr_id'] == kr_id].copy()
+            
+            if kr_data.empty:
+                return 0
+            
+            # Filter checkins within the time range
+            relevant_checkins = []
+            
+            for _, row in kr_data.iterrows():
+                checkin_since = row.get('checkin_since')
+                checkin_id = row.get('checkin_id')
+                
+                # Skip if no checkin data
+                if pd.isna(checkin_since) or pd.isna(checkin_id) or checkin_since == '' or checkin_id == '':
+                    continue
+                
+                try:
+                    checkin_date = pd.to_datetime(checkin_since)
+                    
+                    # Check if checkin is within range (quarter start to last Friday)
+                    if quarter_start <= checkin_date <= last_friday:
+                        relevant_checkins.append({
+                            'date': checkin_date,
+                            'value': float(row.get('checkin_kr_current_value', 0))
+                        })
+                except:
+                    continue
+            
+            # If we have checkins in the range, return the latest one's value
+            if relevant_checkins:
+                # Sort by date descending (latest first)
+                relevant_checkins.sort(key=lambda x: x['date'], reverse=True)
+                return relevant_checkins[0]['value']
+            else:
+                # No checkins in range - use current KR value as fallback
+                kr_current_value = kr_data.iloc[0].get('kr_current_value', 0)
+                if pd.notna(kr_current_value):
+                    return float(kr_current_value)
+                else:
+                    return 0
+
+        except Exception as e:
+            st.warning(f"Error calculating KR baseline value for KR {kr_id}: {e}")
+            return 0
 
     def calculate_okr_shifts_by_user(self) -> List[Dict]:
-        """Calculate OKR shifts for each user"""
+        """Calculate OKR shifts for each user using improved logic"""
         try:
-            last_friday = self.get_last_friday_date()
             users = self.final_df['goal_user_name'].dropna().unique()
             user_okr_shifts = []
 
             for user in users:
                 user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
+                
+                # Calculate current value (average of unique goal current values)
                 current_value = self.calculate_current_value(user_df)
-                last_friday_value, kr_details = self.calculate_last_friday_value(last_friday, user_df)
+                
+                # Calculate last Friday value with improved logic
+                last_friday_value = self.calculate_last_friday_final_goal_value(user_df)
+                
+                # Calculate OKR shift
                 okr_shift = current_value - last_friday_value
 
                 user_okr_shifts.append({
                     'user_name': user,
-                    'current_value': current_value,
-                    'last_friday_value': last_friday_value,
-                    'okr_shift': okr_shift,
-                    'kr_details_count': len(kr_details)
+                    'current_value': round(current_value, 2),
+                    'last_friday_value': round(last_friday_value, 2),
+                    'okr_shift': round(okr_shift, 2)
                 })
 
             return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
@@ -1232,7 +1274,8 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     with col2:
         email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
 
-    run_analysis(analyzer, selected_cycle, show_missing_analysis)
+    if analyze_button:
+        run_analysis(analyzer, selected_cycle, show_missing_analysis)
 
     # Send email report
     if email_button:
