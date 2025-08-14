@@ -598,30 +598,137 @@ class OKRAnalysisSystem:
         except Exception as e:
             st.error(f"Error calculating last Friday value: {e}")
             return 0, []
-
-    def calculate_okr_shifts_by_user(self) -> List[Dict]:
-        """Calculate OKR shifts for each user"""
+    def calculate_kr_shift_last_friday(self, row: pd.Series, last_friday: datetime) -> float:
+        """Calculate kr_shift_last_friday = kr_current_value - last_friday_checkin_value"""
+        try:
+            # Get current kr value
+            kr_current_value = pd.to_numeric(row.get('kr_current_value', 0), errors='coerce')
+            if pd.isna(kr_current_value):
+                kr_current_value = 0
+            
+            # Calculate last friday checkin value for this KR
+            kr_id = row.get('kr_id', '')
+            if not kr_id:
+                return kr_current_value  # If no KR ID, shift = current value
+            
+            # Filter data for this specific KR and find checkins within range
+            quarter_start = self.get_quarter_start_date()
+            kr_checkins = self.final_df[
+                (self.final_df['kr_id'] == kr_id) & 
+                (self.final_df['checkin_id'].notna()) &
+                (self.final_df['checkin_name'].notna()) &
+                (self.final_df['checkin_name'] != '')
+            ].copy()
+            
+            # Convert checkin dates and filter by time range
+            if not kr_checkins.empty:
+                kr_checkins['checkin_since_dt'] = pd.to_datetime(kr_checkins['checkin_since'], errors='coerce')
+                kr_checkins = kr_checkins[
+                    (kr_checkins['checkin_since_dt'] >= quarter_start) &
+                    (kr_checkins['checkin_since_dt'] <= last_friday)
+                ]
+                
+                # Get latest checkin value in range
+                if not kr_checkins.empty:
+                    latest_checkin = kr_checkins.loc[kr_checkins['checkin_since_dt'].idxmax()]
+                    last_friday_checkin_value = pd.to_numeric(latest_checkin.get('checkin_kr_current_value', 0), errors='coerce')
+                    if pd.isna(last_friday_checkin_value):
+                        last_friday_checkin_value = 0
+                else:
+                    last_friday_checkin_value = 0
+            else:
+                last_friday_checkin_value = 0
+            
+            # Calculate shift
+            kr_shift = kr_current_value - last_friday_checkin_value
+            return kr_shift
+            
+        except Exception as e:
+            st.warning(f"Error calculating kr_shift_last_friday: {e}")
+            return 0
+    
+    def calculate_final_okr_goal_shift(self, user_df: pd.DataFrame) -> float:
+        """
+        Calculate final_okr_goal_shift using the same logic as Google Apps Script:
+        1. Group by unique combination of goal_name + kr_name
+        2. Calculate average kr_shift_last_friday for each combination
+        3. Calculate average of all combination averages
+        """
         try:
             last_friday = self.get_last_friday_date()
+            
+            # Create unique combinations mapping
+            unique_combinations = {}
+            
+            # Process each row to calculate kr_shift_last_friday
+            for idx, row in user_df.iterrows():
+                goal_name = row.get('goal_name', '')
+                kr_name = row.get('kr_name', '')
+                
+                # Skip rows without goal_name or kr_name
+                if not goal_name or not kr_name:
+                    continue
+                
+                # Create unique combination key
+                combo_key = f"{goal_name}|{kr_name}"
+                
+                # Calculate kr_shift_last_friday for this row
+                kr_shift = self.calculate_kr_shift_last_friday(row, last_friday)
+                
+                # Add to combinations
+                if combo_key not in unique_combinations:
+                    unique_combinations[combo_key] = []
+                unique_combinations[combo_key].append(kr_shift)
+            
+            # Calculate final_okr_friday_shift for each unique combination
+            final_okr_friday_shifts = []
+            
+            for combo_key, kr_shifts in unique_combinations.items():
+                # Calculate average kr_shift_last_friday for this combination
+                if kr_shifts:
+                    avg_kr_shift = sum(kr_shifts) / len(kr_shifts)
+                    final_okr_friday_shifts.append(avg_kr_shift)
+            
+            # Calculate final_okr_goal_shift (average of all final_okr_friday_shift)
+            if final_okr_friday_shifts:
+                final_okr_goal_shift = sum(final_okr_friday_shifts) / len(final_okr_friday_shifts)
+            else:
+                final_okr_goal_shift = 0
+            
+            return final_okr_goal_shift
+            
+        except Exception as e:
+            st.error(f"Error calculating final_okr_goal_shift: {e}")
+            return 0
+    def calculate_okr_shifts_by_user(self) -> List[Dict]:
+    """Calculate OKR shifts for each user using the same logic as Google Apps Script"""
+        try:
             users = self.final_df['goal_user_name'].dropna().unique()
             user_okr_shifts = []
-
+    
             for user in users:
                 user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
+                
+                # Calculate final_okr_goal_shift using the new method
+                final_okr_goal_shift = self.calculate_final_okr_goal_shift(user_df)
+                
+                # Keep the old calculation methods for comparison/legacy
                 current_value = self.calculate_current_value(user_df)
-                last_friday_value, kr_details = self.calculate_last_friday_value(last_friday, user_df)
-                okr_shift = current_value - last_friday_value
-
+                last_friday_value, kr_details = self.calculate_last_friday_value(self.get_last_friday_date(), user_df)
+                legacy_okr_shift = current_value - last_friday_value
+    
                 user_okr_shifts.append({
                     'user_name': user,
+                    'okr_shift': final_okr_goal_shift,  # Use new calculation method
                     'current_value': current_value,
                     'last_friday_value': last_friday_value,
-                    'okr_shift': okr_shift,
+                    'legacy_okr_shift': legacy_okr_shift,  # Keep old method for reference
                     'kr_details_count': len(kr_details)
                 })
-
+    
+            # Sort by new okr_shift (final_okr_goal_shift) descending
             return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
-
+    
         except Exception as e:
             st.error(f"Error calculating OKR shifts: {e}")
             return []
