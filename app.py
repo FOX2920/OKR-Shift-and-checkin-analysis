@@ -94,13 +94,23 @@ class OKRAnalysisSystem:
             return None
 
     def get_last_friday_date(self) -> datetime:
-        """Get last Friday date"""
+        """Get last Friday date - always returns Friday of previous week regardless of current day"""
         today = datetime.now()
-        days_since_monday = today.weekday()
-        monday_this_week = today - timedelta(days=days_since_monday)
-        monday_last_week = monday_this_week - timedelta(days=7)
-        friday_last_week = monday_last_week + timedelta(days=4)
-        return friday_last_week
+        
+        # Get current day of week (0=Monday, 6=Sunday)
+        current_weekday = today.weekday()
+        
+        # Calculate days back to Monday of current week
+        days_to_monday_current_week = current_weekday
+        monday_current_week = today - timedelta(days=days_to_monday_current_week)
+        
+        # Get Monday of previous week
+        monday_previous_week = monday_current_week - timedelta(days=7)
+        
+        # Get Friday of previous week (Monday + 4 days)
+        friday_previous_week = monday_previous_week + timedelta(days=4)
+        
+        return friday_previous_week
 
     def get_quarter_start_date(self) -> datetime:
         """Get current quarter start date"""
@@ -598,8 +608,10 @@ class OKRAnalysisSystem:
         except Exception as e:
             st.error(f"Error calculating last Friday value: {e}")
             return 0, []
+
     def calculate_kr_shift_last_friday(self, row: pd.Series, last_friday: datetime) -> float:
-        """Calculate kr_shift_last_friday = kr_current_value - last_friday_checkin_value"""
+        """Calculate kr_shift_last_friday = kr_current_value - last_friday_checkin_value
+        Always compares against Friday of previous week"""
         try:
             # Get current kr value
             kr_current_value = pd.to_numeric(row.get('kr_current_value', 0), errors='coerce')
@@ -613,6 +625,10 @@ class OKRAnalysisSystem:
             
             # Filter data for this specific KR and find checkins within range
             quarter_start = self.get_quarter_start_date()
+            
+            # Important: Use the reference Friday (previous Friday) as the cutoff
+            reference_friday = self.get_last_friday_date()
+            
             kr_checkins = self.final_df[
                 (self.final_df['kr_id'] == kr_id) & 
                 (self.final_df['checkin_id'].notna()) &
@@ -620,15 +636,15 @@ class OKRAnalysisSystem:
                 (self.final_df['checkin_name'] != '')
             ].copy()
             
-            # Convert checkin dates and filter by time range
+            # Convert checkin dates and filter by time range up to reference Friday
             if not kr_checkins.empty:
                 kr_checkins['checkin_since_dt'] = pd.to_datetime(kr_checkins['checkin_since'], errors='coerce')
                 kr_checkins = kr_checkins[
                     (kr_checkins['checkin_since_dt'] >= quarter_start) &
-                    (kr_checkins['checkin_since_dt'] <= last_friday)
+                    (kr_checkins['checkin_since_dt'] <= reference_friday)
                 ]
                 
-                # Get latest checkin value in range
+                # Get latest checkin value in range (up to reference Friday)
                 if not kr_checkins.empty:
                     latest_checkin = kr_checkins.loc[kr_checkins['checkin_since_dt'].idxmax()]
                     last_friday_checkin_value = pd.to_numeric(latest_checkin.get('checkin_kr_current_value', 0), errors='coerce')
@@ -639,7 +655,7 @@ class OKRAnalysisSystem:
             else:
                 last_friday_checkin_value = 0
             
-            # Calculate shift
+            # Calculate shift: current value - value as of reference Friday
             kr_shift = kr_current_value - last_friday_checkin_value
             return kr_shift
             
@@ -649,13 +665,15 @@ class OKRAnalysisSystem:
     
     def calculate_final_okr_goal_shift(self, user_df: pd.DataFrame) -> float:
         """
-        Calculate final_okr_goal_shift using the same logic as Google Apps Script:
+        Calculate final_okr_goal_shift using reference to previous Friday:
         1. Group by unique combination of goal_name + kr_name
         2. Calculate average kr_shift_last_friday for each combination
         3. Calculate average of all combination averages
+        Always uses Friday of previous week as reference point
         """
         try:
-            last_friday = self.get_last_friday_date()
+            # Get reference Friday (previous Friday)
+            reference_friday = self.get_last_friday_date()
             
             # Create unique combinations mapping
             unique_combinations = {}
@@ -672,8 +690,8 @@ class OKRAnalysisSystem:
                 # Create unique combination key
                 combo_key = f"{goal_name}|{kr_name}"
                 
-                # Calculate kr_shift_last_friday for this row
-                kr_shift = self.calculate_kr_shift_last_friday(row, last_friday)
+                # Calculate kr_shift using reference Friday
+                kr_shift = self.calculate_kr_shift_last_friday(row, reference_friday)
                 
                 # Add to combinations
                 if combo_key not in unique_combinations:
@@ -700,21 +718,25 @@ class OKRAnalysisSystem:
         except Exception as e:
             st.error(f"Error calculating final_okr_goal_shift: {e}")
             return 0
+        
     def calculate_okr_shifts_by_user(self) -> List[Dict]:
-        """Calculate OKR shifts for each user using the same logic as Google Apps Script"""
+        """Calculate OKR shifts for each user always comparing against previous Friday"""
         try:
             users = self.final_df['goal_user_name'].dropna().unique()
             user_okr_shifts = []
     
+            # Get reference Friday for all calculations
+            reference_friday = self.get_last_friday_date()
+    
             for user in users:
                 user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
                 
-                # Calculate final_okr_goal_shift using the new method
+                # Calculate final_okr_goal_shift using reference Friday
                 final_okr_goal_shift = self.calculate_final_okr_goal_shift(user_df)
                 
                 # Keep the old calculation methods for comparison/legacy
                 current_value = self.calculate_current_value(user_df)
-                last_friday_value, kr_details = self.calculate_last_friday_value(self.get_last_friday_date(), user_df)
+                last_friday_value, kr_details = self.calculate_last_friday_value(reference_friday, user_df)
                 legacy_okr_shift = current_value - last_friday_value
     
                 user_okr_shifts.append({
@@ -723,7 +745,8 @@ class OKRAnalysisSystem:
                     'current_value': current_value,
                     'last_friday_value': last_friday_value,
                     'legacy_okr_shift': legacy_okr_shift,  # Keep old method for reference
-                    'kr_details_count': len(kr_details)
+                    'kr_details_count': len(kr_details),
+                    'reference_friday': reference_friday.strftime('%d/%m/%Y')  # Add reference date
                 })
     
             # Sort by new okr_shift (final_okr_goal_shift) descending
@@ -732,7 +755,6 @@ class OKRAnalysisSystem:
         except Exception as e:
             st.error(f"Error calculating OKR shifts: {e}")
             return []
-
     def analyze_checkin_behavior(self) -> Tuple[List[Dict], List[Dict]]:
         """Analyze checkin behavior"""
         try:
@@ -1633,8 +1655,13 @@ def show_missing_analysis_section(analyzer):
         else:
             st.success("✅ All members with goals have made checkins!")
 
+# Cập nhật hàm show_okr_analysis để hiển thị ngày tham chiếu
 def show_okr_analysis(okr_shifts, last_friday):
-    """Show OKR shift analysis"""
+    """Show OKR shift analysis with reference date"""
+    
+    # Display reference information
+    st.info(f"📅 **Ngày tham chiếu:** Thứ 6 tuần trước ({last_friday.strftime('%d/%m/%Y')})")
+    st.info(f"📊 **Logic tính toán:** So sánh giá trị hiện tại với giá trị tại thứ 6 tuần trước")
     
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -1645,52 +1672,55 @@ def show_okr_analysis(okr_shifts, last_friday):
     avg_shift = np.mean([u['okr_shift'] for u in okr_shifts])
     
     with col1:
-        st.metric("Progress Makers", progress_users, delta=f"{progress_users/len(okr_shifts)*100:.1f}%")
+        st.metric("Tiến bộ", progress_users, delta=f"{progress_users/len(okr_shifts)*100:.1f}%")
     
     with col2:
-        st.metric("Stable Users", stable_users, delta=f"{stable_users/len(okr_shifts)*100:.1f}%")
+        st.metric("Ổn định", stable_users, delta=f"{stable_users/len(okr_shifts)*100:.1f}%")
     
     with col3:
-        st.metric("Issue Cases", issue_users, delta=f"{issue_users/len(okr_shifts)*100:.1f}%")
+        st.metric("Cần hỗ trợ", issue_users, delta=f"{issue_users/len(okr_shifts)*100:.1f}%")
     
     with col4:
-        st.metric("Average Shift", f"{avg_shift:.2f}", delta=None)
+        st.metric("Dịch chuyển TB", f"{avg_shift:.2f}", delta=None)
     
-    # OKR shift chart
+    # OKR shift chart with reference date in title
     okr_df = pd.DataFrame(okr_shifts)
     
     fig = px.bar(
         okr_df.head(20), 
         x='user_name', 
         y='okr_shift',
-        title=f"OKR Shifts by User (Reference: {last_friday.strftime('%d/%m/%Y')})",
+        title=f"Dịch chuyển OKR so với thứ 6 tuần trước ({last_friday.strftime('%d/%m/%Y')})",
         color='okr_shift',
-        color_continuous_scale=['red', 'yellow', 'green']
+        color_continuous_scale=['red', 'yellow', 'green'],
+        labels={
+            'user_name': 'Nhân viên',
+            'okr_shift': 'Dịch chuyển OKR'
+        }
     )
     fig.update_xaxes(tickangle=45)
     fig.update_layout(height=500)
     st.plotly_chart(fig, use_container_width=True)
     
     # Top performers table
-    st.subheader("🏆 Top Performers")
+    st.subheader("🏆 Nhân viên tiến bộ nhất")
     top_performers = okr_df[okr_df['okr_shift'] > 0].head(10)
     if not top_performers.empty:
-        st.dataframe(
-            top_performers[['user_name', 'okr_shift', 'current_value', 'last_friday_value']].round(2),
-            use_container_width=True
-        )
+        display_cols = ['user_name', 'okr_shift', 'current_value', 'last_friday_value']
+        display_df = top_performers[display_cols].round(2)
+        display_df.columns = ['Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', f'Giá trị thứ 6 tuần trước']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
-        st.info("No users with positive OKR shifts found")
+        st.info("Không có nhân viên nào có dịch chuyển OKR dương")
     
     # Issues table
     if issue_users > 0:
-        st.subheader("⚠️ Users with Issues")
+        st.subheader("⚠️ Nhân viên cần hỗ trợ")
         issue_df = okr_df[okr_df['okr_shift'] < 0]
-        st.dataframe(
-            issue_df[['user_name', 'okr_shift', 'current_value', 'last_friday_value']].round(2),
-            use_container_width=True
-        )
-
+        display_cols = ['user_name', 'okr_shift', 'current_value', 'last_friday_value']
+        display_df = issue_df[display_cols].round(2)
+        display_df.columns = ['Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', f'Giá trị thứ 6 tuần trước']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarter_start):
     """Show checkin behavior analysis"""
     
