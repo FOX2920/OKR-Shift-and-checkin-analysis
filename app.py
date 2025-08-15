@@ -705,7 +705,8 @@ class OKRAnalysisSystem:
             return 0
         
     def calculate_okr_shifts_by_user(self) -> List[Dict]:
-        """Calculate OKR shifts for each user always comparing against previous Friday"""
+        """Calculate OKR shifts for each user always comparing against previous Friday
+        If shift > current_value, then shift = current_value - last_friday_value"""
         try:
             users = self.final_df['goal_user_name'].dropna().unique()
             user_okr_shifts = []
@@ -719,22 +720,32 @@ class OKRAnalysisSystem:
                 # Calculate final_okr_goal_shift using reference Friday
                 final_okr_goal_shift = self.calculate_final_okr_goal_shift(user_df)
                 
-                # Keep the old calculation methods for comparison/legacy
+                # Calculate current and last Friday values for comparison/legacy
                 current_value = self.calculate_current_value(user_df)
                 last_friday_value, kr_details = self.calculate_last_friday_value(reference_friday, user_df)
                 legacy_okr_shift = current_value - last_friday_value
     
+                # NEW LOGIC: If shift > current_value, then shift = current_value - last_friday_value
+                adjusted_okr_shift = final_okr_goal_shift
+                adjustment_applied = False
+                
+                if final_okr_goal_shift > current_value:
+                    adjusted_okr_shift = current_value - last_friday_value
+                    adjustment_applied = True
+    
                 user_okr_shifts.append({
                     'user_name': user,
-                    'okr_shift': final_okr_goal_shift,  # Use new calculation method
+                    'okr_shift': adjusted_okr_shift,  # Use adjusted value
+                    'original_shift': final_okr_goal_shift,  # Keep original for reference
                     'current_value': current_value,
                     'last_friday_value': last_friday_value,
                     'legacy_okr_shift': legacy_okr_shift,  # Keep old method for reference
+                    'adjustment_applied': adjustment_applied,  # Flag to show if adjustment was applied
                     'kr_details_count': len(kr_details),
                     'reference_friday': reference_friday.strftime('%d/%m/%Y')  # Add reference date
                 })
     
-            # Sort by new okr_shift (final_okr_goal_shift) descending
+            # Sort by adjusted okr_shift descending
             return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
     
         except Exception as e:
