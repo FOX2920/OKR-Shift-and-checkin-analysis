@@ -1819,7 +1819,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
 
     # Send email report
     if email_button:
-        send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
+        send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
 def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
     """Send email report with analysis results"""
