@@ -1195,67 +1195,67 @@ class EmailReportGenerator:
             
             return html_content
     
-        def _generate_most_active_table_html(self, overall_checkins):
-            """Generate HTML table for most active users"""
-            if not overall_checkins:
-                return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
-            
-            # Sort by total checkins and take top 20
-            sorted_checkins = sorted(overall_checkins, key=lambda x: x.get('total_checkins', 0), reverse=True)[:20]
-            
-            html = """
-            <table>
-                <thead>
-                    <tr>
-                        <th>🏆 Xếp hạng</th>
-                        <th>👤 Nhân viên</th>
-                        <th>📊 Tổng checkin</th>
-                        <th>⚡ Tần suất/tuần (quý)</th>
-                        <th>📅 Checkin tuần trước</th>
-                    </tr>
-                </thead>
-                <tbody>
-            """
-            
-            for i, item in enumerate(sorted_checkins):
-                rank = i + 1
-                name = item.get('user_name', 'Unknown')
-                total_checkins = item.get('total_checkins', 0)
-                frequency = item.get('checkin_frequency_per_week', 0)
-                last_week = item.get('last_week_checkins', 0)
-                
-                # Add rank styling
-                rank_style = ""
-                if rank == 1:
-                    rank_style = "style='color: #FFD700; font-weight: bold;'"  # Gold
-                elif rank == 2:
-                    rank_style = "style='color: #C0C0C0; font-weight: bold;'"  # Silver
-                elif rank == 3:
-                    rank_style = "style='color: #CD7F32; font-weight: bold;'"  # Bronze
-                
-                row_class = "even" if i % 2 == 0 else "odd"
-                
-                # Add icons for top 3
-                rank_display = rank
-                if rank == 1:
-                    rank_display = "🥇 1"
-                elif rank == 2:
-                    rank_display = "🥈 2"
-                elif rank == 3:
-                    rank_display = "🥉 3"
-                
-                html += f"""
-                <tr class='{row_class}'>
-                    <td {rank_style}><strong>{rank_display}</strong></td>
-                    <td><strong>{name}</strong></td>
-                    <td><span style='color: #3498db; font-weight: 600;'>{total_checkins}</span></td>
-                    <td><span style='color: #27AE60; font-weight: 600;'>{frequency:.2f}</span></td>
-                    <td><span style='color: #7f8c8d; font-weight: 600;'>{last_week}</span></td>
+    def _generate_most_active_table_html(self, overall_checkins):
+        """Generate HTML table for most active users"""
+        if not overall_checkins:
+            return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
+        
+        # Sort by total checkins and take top 20
+        sorted_checkins = sorted(overall_checkins, key=lambda x: x.get('total_checkins', 0), reverse=True)[:20]
+        
+        html = """
+        <table>
+            <thead>
+                <tr>
+                    <th>🏆 Xếp hạng</th>
+                    <th>👤 Nhân viên</th>
+                    <th>📊 Tổng checkin</th>
+                    <th>⚡ Tần suất/tuần (quý)</th>
+                    <th>📅 Checkin tuần trước</th>
                 </tr>
-                """
+            </thead>
+            <tbody>
+        """
+        
+        for i, item in enumerate(sorted_checkins):
+            rank = i + 1
+            name = item.get('user_name', 'Unknown')
+            total_checkins = item.get('total_checkins', 0)
+            frequency = item.get('checkin_frequency_per_week', 0)
+            last_week = item.get('last_week_checkins', 0)
             
-            html += "</tbody></table>"
-            return html
+            # Add rank styling
+            rank_style = ""
+            if rank == 1:
+                rank_style = "style='color: #FFD700; font-weight: bold;'"  # Gold
+            elif rank == 2:
+                rank_style = "style='color: #C0C0C0; font-weight: bold;'"  # Silver
+            elif rank == 3:
+                rank_style = "style='color: #CD7F32; font-weight: bold;'"  # Bronze
+            
+            row_class = "even" if i % 2 == 0 else "odd"
+            
+            # Add icons for top 3
+            rank_display = rank
+            if rank == 1:
+                rank_display = "🥇 1"
+            elif rank == 2:
+                rank_display = "🥈 2"
+            elif rank == 3:
+                rank_display = "🥉 3"
+            
+            html += f"""
+            <tr class='{row_class}'>
+                <td {rank_style}><strong>{rank_display}</strong></td>
+                <td><strong>{name}</strong></td>
+                <td><span style='color: #3498db; font-weight: 600;'>{total_checkins}</span></td>
+                <td><span style='color: #27AE60; font-weight: 600;'>{frequency:.2f}</span></td>
+                <td><span style='color: #7f8c8d; font-weight: 600;'>{last_week}</span></td>
+            </tr>
+            """
+        
+        html += "</tbody></table>"
+        return html
 
     def _generate_table_html(self, data, headers, fields):
         """Generate HTML table from data"""
