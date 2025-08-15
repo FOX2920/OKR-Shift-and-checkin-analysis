@@ -508,35 +508,20 @@ class OKRAnalysisSystem:
             st.error(f"Error cleaning data: {e}")
 
     def calculate_current_value(self, df: pd.DataFrame = None) -> float:
-        """Calculate current OKR value"""
+        """Calculate current OKR value using average of goal_current_value for unique goal_names"""
         if df is None:
             df = self.final_df
-
+    
         try:
-            unique_krs = df['kr_id'].dropna().unique()
-            goal_values_dict = {}
-
-            for kr_id in unique_krs:
-                kr_data = df[df['kr_id'] == kr_id].copy()
-                if len(kr_data) > 0:
-                    latest_record = kr_data.iloc[-1]
-                    goal_name = latest_record['goal_name']
-                    kr_value = pd.to_numeric(latest_record['kr_current_value'], errors='coerce')
-
-                    if pd.isna(kr_value):
-                        kr_value = 0
-
-                    if goal_name not in goal_values_dict:
-                        goal_values_dict[goal_name] = []
-                    goal_values_dict[goal_name].append(kr_value)
-
-            goal_values = []
-            for goal_name, kr_values_list in goal_values_dict.items():
-                goal_value = np.mean(kr_values_list)
-                goal_values.append(goal_value)
-
-            return np.mean(goal_values) if goal_values else 0
-
+            # Get unique goal_names and their goal_current_value
+            unique_goals = df.groupby('goal_name')['goal_current_value'].first().reset_index()
+            
+            # Convert goal_current_value to numeric
+            unique_goals['goal_current_value'] = pd.to_numeric(unique_goals['goal_current_value'], errors='coerce').fillna(0)
+            
+            # Calculate average of goal_current_value for unique goals
+            return unique_goals['goal_current_value'].mean() if len(unique_goals) > 0 else 0
+    
         except Exception as e:
             st.error(f"Error calculating current value: {e}")
             return 0
