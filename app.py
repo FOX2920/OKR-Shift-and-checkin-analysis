@@ -1719,88 +1719,7 @@ class EmailReportGenerator:
         except Exception as e:
             return False, f"Lỗi gửi email: {str(e)}"
 
-def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
-    """Send email report with PDF attachment"""
-    
-    st.header("📧 Sending Email Report with PDF")
-    
-    # Progress tracking
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    def update_progress(message, progress):
-        status_text.text(message)
-        progress_bar.progress(progress)
-    
-    try:
-        # Load and process data
-        update_progress("Loading data for email report...", 0.1)
-        df = analyzer.load_and_process_data(update_progress)
-        
-        if df is None or df.empty:
-            st.error("❌ Failed to load data for email report")
-            return
-        
-        update_progress("Analyzing missing goals and checkins...", 0.3)
-        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
-        
-        update_progress("Calculating OKR shifts...", 0.5)
-        okr_shifts = analyzer.calculate_okr_shifts_by_user()
-        
-        update_progress("Creating PDF report...", 0.7)
-        # Create PDF report
-        pdf_generator = PDFReportGenerator()
-        pdf_buffer = pdf_generator.create_pdf_report(
-            analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
-        )
-        
-        update_progress("Creating email content...", 0.8)
-        html_content = email_generator.create_email_content(
-            analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
-        )
-        
-        update_progress("Sending email with PDF attachment...", 0.9)
-        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
-        
-        # Use the existing email generator with PDF capability (FIXED LINE)
-        success, message = email_generator.send_email_with_pdf_report(
-            email_from, email_password, email_to, subject, html_content, pdf_buffer
-        )
-        
-        progress_bar.empty()
-        status_text.empty()
-        
-        if success:
-            st.success(f"✅ {message}")
-            st.info(f"📧 Email report with PDF attachment sent to: {email_to}")
-            
-            # Show email preview and PDF download option
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.checkbox("📋 Show email preview", value=False):
-                    st.subheader("Email Preview")
-                    st.components.v1.html(html_content, height=600, scrolling=True)
-            
-            with col2:
-                if pdf_buffer:
-                    pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                    st.download_button(
-                        label="📥 Download PDF Report",
-                        data=pdf_buffer.getvalue(),
-                        file_name=pdf_filename,
-                        mime="application/pdf",
-                        key="download_pdf_report"
-                    )
-        else:
-            st.error(f"❌ {message}")
-            
-    except Exception as e:
-        progress_bar.empty()
-        status_text.empty()
-        st.error(f"❌ Error sending email report: {e}")
+
 
 
 # ==================== STREAMLIT APP ====================
@@ -1954,6 +1873,89 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
             if st.checkbox("📋 Show email preview", value=False):
                 st.subheader("Email Preview")
                 st.components.v1.html(html_content, height=800, scrolling=True)
+        else:
+            st.error(f"❌ {message}")
+            
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"❌ Error sending email report: {e}")
+
+def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
+    """Send email report with PDF attachment"""
+    
+    st.header("📧 Sending Email Report with PDF")
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(message, progress):
+        status_text.text(message)
+        progress_bar.progress(progress)
+    
+    try:
+        # Load and process data
+        update_progress("Loading data for email report...", 0.1)
+        df = analyzer.load_and_process_data(update_progress)
+        
+        if df is None or df.empty:
+            st.error("❌ Failed to load data for email report")
+            return
+        
+        update_progress("Analyzing missing goals and checkins...", 0.3)
+        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
+        
+        update_progress("Calculating OKR shifts...", 0.5)
+        okr_shifts = analyzer.calculate_okr_shifts_by_user()
+        
+        update_progress("Creating PDF report...", 0.7)
+        # Create PDF report
+        pdf_generator = PDFReportGenerator()
+        pdf_buffer = pdf_generator.create_pdf_report(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts
+        )
+        
+        update_progress("Creating email content...", 0.8)
+        html_content = email_generator.create_email_content(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts
+        )
+        
+        update_progress("Sending email with PDF attachment...", 0.9)
+        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
+        
+        # Use the existing email generator with PDF capability (FIXED LINE)
+        success, message = email_generator.send_email_with_pdf_report(
+            email_from, email_password, email_to, subject, html_content, pdf_buffer
+        )
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if success:
+            st.success(f"✅ {message}")
+            st.info(f"📧 Email report with PDF attachment sent to: {email_to}")
+            
+            # Show email preview and PDF download option
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.checkbox("📋 Show email preview", value=False):
+                    st.subheader("Email Preview")
+                    st.components.v1.html(html_content, height=600, scrolling=True)
+            
+            with col2:
+                if pdf_buffer:
+                    pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    st.download_button(
+                        label="📥 Download PDF Report",
+                        data=pdf_buffer.getvalue(),
+                        file_name=pdf_filename,
+                        mime="application/pdf",
+                        key="download_pdf_report"
+                    )
         else:
             st.error(f"❌ {message}")
             
