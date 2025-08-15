@@ -180,58 +180,15 @@ class PDFReportGenerator:
         plt.close(fig)
     
     def _create_charts_page(self, pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with charts and visualizations - Fixed layout"""
+        """Create page with charts and visualizations - Updated layout"""
         
         fig = plt.figure(figsize=(8.27, 11.69))
         
         # Title
         fig.suptitle('BIỂU ĐỒ PHÂN TÍCH', fontsize=16, fontweight='bold', y=0.95, color='#2c3e50')
         
-        # Chart 1: Goal Distribution (Pie Chart) - Top left
-        ax1 = plt.subplot(2, 2, 1)
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-        members_with_goals = total_members - len(members_without_goals)
-        
-        if total_members > 0:
-            sizes = [members_with_goals, len(members_without_goals)]
-            labels = ['Có OKR', 'Chưa có OKR']
-            colors = ['#27AE60', '#E74C3C']
-            
-            wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
-                                             colors=colors, startangle=90)
-            ax1.set_title('Phân bố trạng thái OKR', fontsize=11, fontweight='bold', pad=15)
-            
-            # Adjust text size
-            for text in texts:
-                text.set_fontsize(9)
-            for autotext in autotexts:
-                autotext.set_fontsize(8)
-                autotext.set_color('white')
-                autotext.set_weight('bold')
-        
-        # Chart 2: Checkin Distribution (Pie Chart) - Top right
-        ax2 = plt.subplot(2, 2, 2)
-        members_with_checkins = total_members - len(members_without_checkins)
-        
-        if total_members > 0:
-            sizes = [members_with_checkins, len(members_without_checkins)]
-            labels = ['Có Checkin', 'Chưa có Checkin']
-            colors = ['#3498DB', '#F39C12']
-            
-            wedges, texts, autotexts = ax2.pie(sizes, labels=labels, autopct='%1.1f%%', 
-                                             colors=colors, startangle=90)
-            ax2.set_title('Phân bố trạng thái Checkin', fontsize=11, fontweight='bold', pad=15)
-            
-            # Adjust text size
-            for text in texts:
-                text.set_fontsize(9)
-            for autotext in autotexts:
-                autotext.set_fontsize(8)
-                autotext.set_color('white')
-                autotext.set_weight('bold')
-        
-        # Chart 3: Progress Distribution - Bottom left
-        ax3 = plt.subplot(2, 2, 3)
+        # Chart 1: Progress Distribution - Top center (larger)
+        ax1 = plt.subplot(2, 1, 1)
         if okr_shifts:
             progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
             stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
@@ -245,42 +202,41 @@ class PDFReportGenerator:
             non_zero_data = [(size, label, color) for size, label, color in zip(sizes, labels, colors) if size > 0]
             if non_zero_data:
                 sizes, labels, colors = zip(*non_zero_data)
-                wedges, texts, autotexts = ax3.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
                                                  colors=colors, startangle=90)
-                ax3.set_title('Phân bố tiến độ nhân viên', fontsize=11, fontweight='bold', pad=15)
+                ax1.set_title('Phân bố tiến độ nhân viên', fontsize=13, fontweight='bold', pad=20)
                 
                 # Adjust text size
                 for text in texts:
-                    text.set_fontsize(9)
+                    text.set_fontsize(11)
                 for autotext in autotexts:
-                    autotext.set_fontsize(8)
+                    autotext.set_fontsize(10)
                     autotext.set_color('white')
                     autotext.set_weight('bold')
         
-        # Chart 4: OKR Shifts Bar Chart - Bottom spanning full width
-        ax4 = plt.subplot(2, 1, 2)
+        # Chart 2: OKR Shifts Bar Chart - Bottom (larger and with full names)
+        ax2 = plt.subplot(2, 1, 2)
         if okr_shifts:
-            top_shifts = okr_shifts[:12]  # Reduced to 12 for better readability
-            names = [u['user_name'][:12] + '...' if len(u['user_name']) > 12 else u['user_name'] 
-                    for u in top_shifts]
+            top_shifts = okr_shifts[:15]  # Increased to 15 for more data
+            names = [u['user_name'] for u in top_shifts]  # Show full names
             values = [u['okr_shift'] for u in top_shifts]
             
             colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
             
-            bars = ax4.bar(range(len(names)), values, color=colors)
-            ax4.set_xticks(range(len(names)))
-            ax4.set_xticklabels(names, rotation=45, ha='right', fontsize=8)
-            ax4.set_title('Dịch chuyển OKR (Top 12)', fontsize=11, fontweight='bold', pad=15)
-            ax4.set_ylabel('Dịch chuyển OKR', fontsize=9)
-            ax4.grid(True, alpha=0.3)
+            bars = ax2.bar(range(len(names)), values, color=colors)
+            ax2.set_xticks(range(len(names)))
+            ax2.set_xticklabels(names, rotation=45, ha='right', fontsize=9)  # Increased font size
+            ax2.set_title('Dịch chuyển OKR (Top 15)', fontsize=13, fontweight='bold', pad=20)
+            ax2.set_ylabel('Dịch chuyển OKR', fontsize=10)
+            ax2.grid(True, alpha=0.3)
             
             # Add value labels on bars with better positioning
             for bar, value in zip(bars, values):
                 height = bar.get_height()
-                ax4.text(bar.get_x() + bar.get_width()/2., 
+                ax2.text(bar.get_x() + bar.get_width()/2., 
                         height + (0.02 if height >= 0 else -0.08),
                         f'{value:.2f}', ha='center', 
-                        va='bottom' if height >= 0 else 'top', fontsize=7)
+                        va='bottom' if height >= 0 else 'top', fontsize=8)
         
         plt.tight_layout(rect=[0, 0.02, 1, 0.92])  # Leave space for main title
         pdf.savefig(fig, bbox_inches='tight')
@@ -443,8 +399,8 @@ class PDFReportGenerator:
                     autotext.set_weight('bold')
                 
             elif chart_type == 'bar' and data:
-                names = list(data.keys())[:12]  # Reduced to 12
-                values = list(data.values())[:12]
+                names = list(data.keys())[:15]  # Increased to 15
+                values = list(data.values())[:15]
                 
                 bars = ax.bar(names, values, color=['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values])
                 ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
@@ -452,7 +408,7 @@ class PDFReportGenerator:
                 ax.set_ylabel('Dịch chuyển OKR')
                 
                 # Rotate x-axis labels
-                plt.xticks(rotation=45, ha='right', fontsize=8)
+                plt.xticks(rotation=45, ha='right', fontsize=9)  # Increased font size
                 
                 # Add value labels on bars
                 for bar, value in zip(bars, values):
