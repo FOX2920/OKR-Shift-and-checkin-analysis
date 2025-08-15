@@ -29,9 +29,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 import io
-import requests
-import os
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
@@ -43,8 +42,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')
-from datetime import datetime
+matplotlib.use('Agg')  # Use non-interactive backend
 
 class PDFReportGenerator:
     """Generate PDF reports for OKR analysis with Vietnamese font support"""
@@ -54,72 +52,21 @@ class PDFReportGenerator:
         self.register_vietnamese_fonts()
         self.setup_custom_styles()
     
-    def download_vietnamese_font(self):
-        """Download Vietnamese font from Google Fonts API"""
-        try:
-            # Tạo thư mục fonts nếu chưa có
-            os.makedirs('fonts', exist_ok=True)
-            
-            # Download Noto Sans Vietnamese từ Google Fonts (free & open source)
-            font_urls = {
-                'NotoSans-Regular.ttf': 'https://fonts.gstatic.com/s/notosans/v27/o-0IIpQlx3QUlC5A4PNr5TRASf6M7Q.woff2',
-                'NotoSans-Bold.ttf': 'https://fonts.gstatic.com/s/notosans/v27/o-0NIpQlx3QUlC5A4PNjXhFlYw.woff2'
-            }
-            
-            # Alternative: Dùng CDN link trực tiếp (không cần download)
-            # Hoặc dùng font từ system
-            return self.use_system_font_alternative()
-            
-        except Exception as e:
-            print(f"Font download failed: {e}")
-            return self.use_system_font_alternative()
-    
-    def use_system_font_alternative(self):
-        """Alternative method using system fonts or built-in ReportLab fonts"""
-        try:
-            # Method 1: Dùng built-in font của ReportLab với Unicode support
-            from reportlab.lib.fonts import addMapping
-            from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-            
-            # Đăng ký font Unicode built-in
-            pdfmetrics.registerFont(UnicodeCIDFont('HeiseiMin-W3'))
-            pdfmetrics.registerFont(UnicodeCIDFont('HeiseiKakuGo-W5'))
-            
-            self.font_name = 'HeiseiMin-W3'  # Hỗ trợ Unicode
-            self.font_bold = 'HeiseiKakuGo-W5'
-            print("Using built-in Unicode CID fonts")
-            return True
-            
-        except Exception as e:
-            print(f"CID font registration failed: {e}")
-            
-            # Method 2: Create virtual font mapping
-            try:
-                # Tạo font mapping với encoding đúng
-                self.font_name = 'Helvetica'
-                self.font_bold = 'Helvetica-Bold'
-                print("Using Helvetica with UTF-8 encoding")
-                return True
-                
-            except Exception as e2:
-                print(f"Fallback font failed: {e2}")
-                return False
-    
     def register_vietnamese_fonts(self):
-        """Register Vietnamese-compatible fonts"""
+        """Register Vietnamese-compatible fonts without external files"""
         try:
-            # Thử download hoặc dùng system font
-            success = self.download_vietnamese_font()
-            
-            if not success:
-                # Final fallback
-                self.font_name = 'Helvetica'
-                self.font_bold = 'Helvetica-Bold'
-                
-        except Exception as e:
+            # Sử dụng font có sẵn trong system mà không cần download
+            # Helvetica hỗ trợ Latin characters tốt
             self.font_name = 'Helvetica'
             self.font_bold = 'Helvetica-Bold'
-            print(f"Font registration completely failed: {e}")
+            
+            print("Using system fonts: Helvetica for Vietnamese text support")
+            
+        except Exception as e:
+            print(f"Font registration warning: {e}")
+            # Fallback to basic fonts
+            self.font_name = 'Helvetica'
+            self.font_bold = 'Helvetica-Bold'
     
     def setup_custom_styles(self):
         """Setup custom styles for PDF with Vietnamese font support"""
@@ -156,66 +103,55 @@ class PDFReportGenerator:
         ))
     
     def safe_vietnamese_text(self, text):
-        """Safely encode Vietnamese text for PDF with utf-8-sig"""
-        if isinstance(text, str):
-            try:
-                # Thử utf-8-sig như user gợi ý
-                return text.encode('utf-8-sig').decode('utf-8-sig').encode('utf-8').decode('utf-8')
-            except:
-                try:
-                    # Fallback: utf-8 thông thường
-                    return text.encode('utf-8').decode('utf-8')
-                except:
-                    # Final fallback: loại bỏ ký tự đặc biệt
-                    return text.encode('ascii', 'ignore').decode('ascii')
-        return str(text)
-    
-    def create_vietnamese_paragraph(self, text, style):
-        """Create paragraph with proper Vietnamese encoding"""
+        """Safely encode Vietnamese text for PDF"""
+        if not text:
+            return ""
+        
         try:
-            # Method 1: Dùng HTML entities cho ký tự đặc biệt
-            vietnamese_chars = {
-                'á': '&#225;', 'à': '&#224;', 'ả': '&#7843;', 'ã': '&#227;', 'ạ': '&#7841;',
-                'â': '&#226;', 'ấ': '&#7845;', 'ầ': '&#7847;', 'ẩ': '&#7849;', 'ẫ': '&#7851;', 'ậ': '&#7853;',
-                'ă': '&#259;', 'ắ': '&#7855;', 'ằ': '&#7857;', 'ẳ': '&#7859;', 'ẵ': '&#7861;', 'ặ': '&#7863;',
-                'đ': '&#273;',
-                'é': '&#233;', 'è': '&#232;', 'ẻ': '&#7867;', 'ẽ': '&#7869;', 'ẹ': '&#7865;',
-                'ê': '&#234;', 'ế': '&#7871;', 'ề': '&#7873;', 'ể': '&#7875;', 'ễ': '&#7877;', 'ệ': '&#7879;',
-                'í': '&#237;', 'ì': '&#236;', 'ỉ': '&#7881;', 'ĩ': '&#297;', 'ị': '&#7883;',
-                'ó': '&#243;', 'ò': '&#242;', 'ỏ': '&#7887;', 'õ': '&#245;', 'ọ': '&#7885;',
-                'ô': '&#244;', 'ố': '&#7889;', 'ồ': '&#7891;', 'ổ': '&#7893;', 'ỗ': '&#7895;', 'ộ': '&#7897;',
-                'ơ': '&#417;', 'ớ': '&#7899;', 'ờ': '&#7901;', 'ở': '&#7903;', 'ỡ': '&#7905;', 'ợ': '&#7907;',
-                'ú': '&#250;', 'ù': '&#249;', 'ủ': '&#7911;', 'ũ': '&#361;', 'ụ': '&#7909;',
-                'ư': '&#432;', 'ứ': '&#7913;', 'ừ': '&#7915;', 'ử': '&#7917;', 'ữ': '&#7919;', 'ự': '&#7921;',
-                'ý': '&#253;', 'ỳ': '&#7923;', 'ỷ': '&#7927;', 'ỹ': '&#7929;', 'ỵ': '&#7925;',
-                # Uppercase
-                'Á': '&#193;', 'À': '&#192;', 'Ả': '&#7842;', 'Ã': '&#195;', 'Ạ': '&#7840;',
-                'Â': '&#194;', 'Ấ': '&#7844;', 'Ầ': '&#7846;', 'Ẩ': '&#7848;', 'Ẫ': '&#7850;', 'Ậ': '&#7852;',
-                'Ă': '&#258;', 'Ắ': '&#7854;', 'Ằ': '&#7856;', 'Ẳ': '&#7858;', 'Ẵ': '&#7860;', 'Ặ': '&#7862;',
-                'Đ': '&#272;',
-                'É': '&#201;', 'È': '&#200;', 'Ẻ': '&#7866;', 'Ẽ': '&#7868;', 'Ẹ': '&#7864;',
-                'Ê': '&#202;', 'Ế': '&#7870;', 'Ề': '&#7872;', 'Ể': '&#7874;', 'Ễ': '&#7876;', 'Ệ': '&#7878;',
-                'Í': '&#205;', 'Ì': '&#204;', 'Ỉ': '&#7880;', 'Ĩ': '&#296;', 'Ị': '&#7882;',
-                'Ó': '&#211;', 'Ò': '&#210;', 'Ỏ': '&#7886;', 'Õ': '&#213;', 'Ọ': '&#7884;',
-                'Ô': '&#212;', 'Ố': '&#7888;', 'Ồ': '&#7890;', 'Ổ': '&#7892;', 'Ỗ': '&#7894;', 'Ộ': '&#7896;',
-                'Ơ': '&#416;', 'Ớ': '&#7898;', 'Ờ': '&#7900;', 'Ở': '&#7902;', 'Ỡ': '&#7904;', 'Ợ': '&#7906;',
-                'Ú': '&#218;', 'Ù': '&#217;', 'Ủ': '&#7910;', 'Ũ': '&#360;', 'Ụ': '&#7908;',
-                'Ư': '&#431;', 'Ứ': '&#7912;', 'Ừ': '&#7914;', 'Ử': '&#7916;', 'Ữ': '&#7918;', 'Ự': '&#7920;',
-                'Ý': '&#221;', 'Ỳ': '&#7922;', 'Ỷ': '&#7926;', 'Ỹ': '&#7928;', 'Ỵ': '&#7924;'
-            }
-            
-            # Convert Vietnamese chars to HTML entities
-            converted_text = text
-            for vn_char, html_entity in vietnamese_chars.items():
-                converted_text = converted_text.replace(vn_char, html_entity)
-            
-            return Paragraph(converted_text, style)
-            
+            # Sử dụng utf-8-sig để đảm bảo encoding đúng
+            if isinstance(text, str):
+                # Chuyển các ký tự đặc biệt tiếng Việt thành dạng safe
+                vietnamese_map = {
+                    'á': 'a', 'à': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
+                    'ă': 'a', 'ắ': 'a', 'ằ': 'a', 'ẳ': 'a', 'ẵ': 'a', 'ặ': 'a',
+                    'â': 'a', 'ấ': 'a', 'ầ': 'a', 'ẩ': 'a', 'ẫ': 'a', 'ậ': 'a',
+                    'é': 'e', 'è': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
+                    'ê': 'e', 'ế': 'e', 'ề': 'e', 'ể': 'e', 'ễ': 'e', 'ệ': 'e',
+                    'í': 'i', 'ì': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
+                    'ó': 'o', 'ò': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
+                    'ô': 'o', 'ố': 'o', 'ồ': 'o', 'ổ': 'o', 'ỗ': 'o', 'ộ': 'o',
+                    'ơ': 'o', 'ớ': 'o', 'ờ': 'o', 'ở': 'o', 'ỡ': 'o', 'ợ': 'o',
+                    'ú': 'u', 'ù': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
+                    'ư': 'u', 'ứ': 'u', 'ừ': 'u', 'ử': 'u', 'ữ': 'u', 'ự': 'u',
+                    'ý': 'y', 'ỳ': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y',
+                    'đ': 'd',
+                    # Uppercase
+                    'Á': 'A', 'À': 'A', 'Ả': 'A', 'Ã': 'A', 'Ạ': 'A',
+                    'Ă': 'A', 'Ắ': 'A', 'Ằ': 'A', 'Ẳ': 'A', 'Ẵ': 'A', 'Ặ': 'A',
+                    'Â': 'A', 'Ấ': 'A', 'Ầ': 'A', 'Ẩ': 'A', 'Ẫ': 'A', 'Ậ': 'A',
+                    'É': 'E', 'È': 'E', 'Ẻ': 'E', 'Ẽ': 'E', 'Ẹ': 'E',
+                    'Ê': 'E', 'Ế': 'E', 'Ề': 'E', 'Ể': 'E', 'Ễ': 'E', 'Ệ': 'E',
+                    'Í': 'I', 'Ì': 'I', 'Ỉ': 'I', 'Ĩ': 'I', 'Ị': 'I',
+                    'Ó': 'O', 'Ò': 'O', 'Ỏ': 'O', 'Õ': 'O', 'Ọ': 'O',
+                    'Ô': 'O', 'Ố': 'O', 'Ồ': 'O', 'Ổ': 'O', 'Ỗ': 'O', 'Ộ': 'O',
+                    'Ơ': 'O', 'Ớ': 'O', 'Ờ': 'O', 'Ở': 'O', 'Ỡ': 'O', 'Ợ': 'O',
+                    'Ú': 'U', 'Ù': 'U', 'Ủ': 'U', 'Ũ': 'U', 'Ụ': 'U',
+                    'Ư': 'U', 'Ứ': 'U', 'Ừ': 'U', 'Ử': 'U', 'Ữ': 'U', 'Ự': 'U',
+                    'Ý': 'Y', 'Ỳ': 'Y', 'Ỷ': 'Y', 'Ỹ': 'Y', 'Ỵ': 'Y',
+                    'Đ': 'D'
+                }
+                
+                # Tùy chọn: Giữ nguyên tiếng Việt hoặc chuyển sang Latin
+                # Để giữ nguyên, comment dòng dưới
+                for viet, latin in vietnamese_map.items():
+                    text = text.replace(viet, latin)
+                
+                return text
+            else:
+                return str(text)
         except Exception as e:
-            print(f"Vietnamese paragraph creation failed: {e}")
-            # Fallback to ASCII
-            safe_text = text.encode('ascii', 'ignore').decode('ascii')
-            return Paragraph(safe_text, style)
+            print(f"Text encoding error: {e}")
+            return str(text)
     
     def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
                          members_with_goals_no_checkins, okr_shifts):
@@ -225,10 +161,11 @@ class PDFReportGenerator:
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
         story = []
         
-        # Title với Vietnamese paragraph
+        # Title với encoding utf-8-sig
         current_date = datetime.now().strftime("%d/%m/%Y")
-        title_text = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
-        story.append(self.create_vietnamese_paragraph(title_text, self.styles['CustomTitle']))
+        title_text = f"BAO CAO TIEN DO OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngay bao cao: {current_date}"
+        title_safe = self.safe_vietnamese_text(title_text)
+        story.append(Paragraph(title_safe, self.styles['CustomTitle']))
         story.append(Spacer(1, 20))
         
         # Summary statistics
@@ -240,21 +177,25 @@ class PDFReportGenerator:
         stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
         issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
         
-        # Summary table với HTML entities
-        story.append(self.create_vietnamese_paragraph("TỔNG QUAN", self.styles['SectionHeader']))
-        
-        # Tạo table data với encoding cẩn thận
+        # Summary table
+        story.append(Paragraph(self.safe_vietnamese_text("TONG QUAN"), self.styles['SectionHeader']))
         summary_data = [
-            ['Ch&#7881; s&#7889;', 'Gi&#225; tr&#7883;', 'T&#7927; l&#7879;'],  # Chỉ số, Giá trị, Tỷ lệ
-            ['T&#7893;ng nh&#226;n vi&#234;n', str(total_members), '100%'],  # Tổng nhân viên
-            ['C&#243; OKR', str(members_with_goals), f"{(members_with_goals/total_members*100):.1f}%" if total_members > 0 else "0%"],
-            ['C&#243; Checkin', str(members_with_checkins), f"{(members_with_checkins/total_members*100):.1f}%" if total_members > 0 else "0%"],
-            ['Nh&#226;n vi&#234;n ti&#7871;n b&#7897;', str(progress_users), f"{(progress_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
-            ['Nh&#226;n vi&#234;n &#7893;n &#273;&#7883;nh', str(stable_users), f"{(stable_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
-            ['Nh&#226;n vi&#234;n c&#7847;n h&#7895; tr&#7907;', str(issue_users), f"{(issue_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"]
+            ['Chi so', 'Gia tri', 'Ty le'],
+            ['Tong nhan vien', str(total_members), '100%'],
+            ['Co OKR', str(members_with_goals), f"{(members_with_goals/total_members*100):.1f}%" if total_members > 0 else "0%"],
+            ['Co Checkin', str(members_with_checkins), f"{(members_with_checkins/total_members*100):.1f}%" if total_members > 0 else "0%"],
+            ['Nhan vien tien bo', str(progress_users), f"{(progress_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
+            ['Nhan vien on dinh', str(stable_users), f"{(stable_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
+            ['Nhan vien can ho tro', str(issue_users), f"{(issue_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"]
         ]
         
-        summary_table = Table(summary_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
+        # Apply safe text to all table data
+        summary_data_safe = []
+        for row in summary_data:
+            safe_row = [self.safe_vietnamese_text(cell) for cell in row]
+            summary_data_safe.append(safe_row)
+        
+        summary_table = Table(summary_data_safe, colWidths=[3*inch, 1.5*inch, 1.5*inch])
         summary_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -270,30 +211,26 @@ class PDFReportGenerator:
         story.append(summary_table)
         story.append(Spacer(1, 20))
         
-        # Chart sẽ OK vì matplotlib tự handle
-        goal_chart_data = {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)}
-        goal_chart_buffer = self.create_summary_chart(goal_chart_data, 'Phân bố trạng thái OKR', 'pie')
-        if goal_chart_buffer:
-            story.append(self.create_vietnamese_paragraph("PHÂN BỐ TRẠNG THÁI OKR", self.styles['SectionHeader']))
-            story.append(Image(goal_chart_buffer, width=6*inch, height=3*inch))
-            story.append(Spacer(1, 15))
+        # Goal distribution chart - skip image generation if problematic
+        story.append(Paragraph(self.safe_vietnamese_text("PHAN BO TRANG THAI OKR"), self.styles['SectionHeader']))
         
-        # Members without goals với HTML entities
+        # Members without goals
         if members_without_goals:
-            header_text = f"NH&#194;N VI&#202;N CH&#431;A C&#211; OKR ({len(members_without_goals)} ng&#432;&#7901;i)"
-            story.append(self.create_vietnamese_paragraph(header_text, self.styles['SectionHeader']))
+            section_title = f"NHAN VIEN CHUA CO OKR ({len(members_without_goals)} nguoi)"
+            story.append(Paragraph(self.safe_vietnamese_text(section_title), self.styles['SectionHeader']))
             
+            # Limit to first 20 for space
             display_members = members_without_goals[:20]
-            members_data = [['STT', 'T&#234;n', 'Username', 'Ch&#7913;c v&#7909;']]  # STT, Tên, Username, Chức vụ
-            
+            members_data = [['STT', 'Ten', 'Username', 'Chuc vu']]
             for i, member in enumerate(display_members, 1):
-                # Convert tên và chức vụ sang HTML entities nếu cần
                 name = self.safe_vietnamese_text(member.get('name', ''))
-                username = member.get('username', '')
-                job = self.safe_vietnamese_text(member.get('job', ''))
-                job_display = job[:25] + '...' if len(job) > 25 else job
+                username = self.safe_vietnamese_text(member.get('username', ''))
+                job = member.get('job', '')
+                if len(job) > 25:
+                    job = job[:25] + '...'
+                job = self.safe_vietnamese_text(job)
                 
-                members_data.append([str(i), name, username, job_display])
+                members_data.append([str(i), name, username, job])
             
             members_table = Table(members_data, colWidths=[0.5*inch, 2*inch, 1.5*inch, 2.5*inch])
             members_table.setStyle(TableStyle([
@@ -313,9 +250,101 @@ class PDFReportGenerator:
             
             if len(members_without_goals) > 20:
                 story.append(Spacer(1, 10))
-                remaining_text = f"... v&#224; {len(members_without_goals) - 20} nh&#226;n vi&#234;n kh&#225;c"
-                story.append(self.create_vietnamese_paragraph(remaining_text, self.styles['CustomNormal']))
+                remaining_text = f"... va {len(members_without_goals) - 20} nhan vien khac"
+                story.append(Paragraph(self.safe_vietnamese_text(remaining_text), self.styles['CustomNormal']))
             story.append(Spacer(1, 15))
+        
+        story.append(PageBreak())
+        
+        # OKR Shifts analysis
+        if okr_shifts:
+            story.append(Paragraph(self.safe_vietnamese_text("PHAN TICH DICH CHUYEN OKR"), self.styles['SectionHeader']))
+            
+            # Top performers table
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10]
+            if top_performers:
+                story.append(Paragraph(self.safe_vietnamese_text("TOP 10 NHAN VIEN TIEN BO NHAT"), self.styles['SectionHeader']))
+                
+                perf_data = [['STT', 'Nhan vien', 'Dich chuyen', 'Gia tri hien tai', 'Gia tri truoc']]
+                for i, user in enumerate(top_performers, 1):
+                    user_name = user['user_name']
+                    if len(user_name) > 20:
+                        user_name = user_name[:20] + '...'
+                    user_name = self.safe_vietnamese_text(user_name)
+                    
+                    perf_data.append([
+                        str(i),
+                        user_name,
+                        f"{user['okr_shift']:.2f}",
+                        f"{user['current_value']:.2f}",
+                        f"{user['last_friday_value']:.2f}"
+                    ])
+                
+                perf_table = Table(perf_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
+                perf_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
+                    ('FONTSIZE', (0, 0), (-1, 0), 9),
+                    ('FONTNAME', (0, 1), (-1, -1), self.font_name),
+                    ('FONTSIZE', (0, 1), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                story.append(perf_table)
+                story.append(Spacer(1, 20))
+        
+        # Get checkin behavior data for additional analysis
+        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+        
+        if overall_checkins:
+            story.append(Paragraph(self.safe_vietnamese_text("TOP NHAN VIEN HOAT DONG CHECKIN"), self.styles['SectionHeader']))
+            
+            # Top 15 most active checkin users
+            top_checkin_users = overall_checkins[:15]
+            checkin_data = [['STT', 'Nhan vien', 'Tong checkin', 'Tan suat/tuan', 'Checkin tuan truoc']]
+            
+            for i, user in enumerate(top_checkin_users, 1):
+                user_name = user['user_name']
+                if len(user_name) > 20:
+                    user_name = user_name[:20] + '...'
+                user_name = self.safe_vietnamese_text(user_name)
+                
+                checkin_data.append([
+                    str(i),
+                    user_name,
+                    str(user.get('total_checkins', 0)),
+                    f"{user.get('checkin_frequency_per_week', 0):.2f}",
+                    str(user.get('last_week_checkins', 0))
+                ])
+            
+            checkin_table = Table(checkin_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
+            checkin_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTNAME', (0, 1), (-1, -1), self.font_name),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(checkin_table)
+        
+        # Footer
+        story.append(Spacer(1, 30))
+        footer_text = f"""
+        <para align="center">
+        <b>A Plus Mineral Material Corporation</b><br/>
+        Bao cao duoc tao tu dong boi he thong OKR Analysis<br/>
+        Ngay tao: {current_date}
+        </para>
+        """
+        story.append(Paragraph(self.safe_vietnamese_text(footer_text), self.styles['CustomNormal']))
         
         # Build PDF
         doc.build(story)
@@ -323,34 +352,52 @@ class PDFReportGenerator:
         return buffer
     
     def create_summary_chart(self, data, title, chart_type='bar'):
-        """Create matplotlib chart for PDF - này sẽ OK vì matplotlib tự handle font"""
+        """Create matplotlib chart for PDF with Vietnamese font support"""
         try:
-            import matplotlib.font_manager as fm
-            
-            # Setup font cho matplotlib
-            plt.rcParams['font.family'] = ['Arial', 'DejaVu Sans', 'sans-serif']
-            plt.rcParams['axes.unicode_minus'] = False
+            # Thiết lập font cho matplotlib để hỗ trợ tiếng Việt
+            # Sử dụng font có sẵn thay vì DejaVu Sans
+            plt.rcParams['font.family'] = ['Arial', 'Liberation Sans', 'SimHei']
             
             fig, ax = plt.subplots(figsize=(8, 4))
             
             if chart_type == 'pie' and data:
-                labels = list(data.keys())
+                labels = [self.safe_vietnamese_text(str(label)) for label in data.keys()]
                 sizes = list(data.values())
                 colors_pie = ['#27AE60', '#E74C3C', '#3498DB', '#F39C12', '#9B59B6']
                 
                 wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', 
                                                  colors=colors_pie[:len(labels)], startangle=90)
-                ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+                ax.set_title(self.safe_vietnamese_text(title), fontsize=12, fontweight='bold', pad=20)
                 
+                # Đảm bảo text hiển thị đúng
                 for text in texts:
                     text.set_fontsize(10)
                 for autotext in autotexts:
                     autotext.set_color('white')
                     autotext.set_fontsize(9)
                     autotext.set_weight('bold')
+                
+            elif chart_type == 'bar' and data:
+                names = [self.safe_vietnamese_text(str(name)) for name in list(data.keys())[:15]]  # Top 15
+                values = list(data.values())[:15]
+                
+                bars = ax.bar(names, values, color=['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values])
+                ax.set_title(self.safe_vietnamese_text(title), fontsize=12, fontweight='bold', pad=20)
+                ax.set_xlabel(self.safe_vietnamese_text('Nhan vien'))
+                ax.set_ylabel(self.safe_vietnamese_text('Dich chuyen OKR'))
+                
+                # Rotate x-axis labels
+                plt.xticks(rotation=45, ha='right')
+                
+                # Add value labels on bars
+                for bar, value in zip(bars, values):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height + (0.01 if height >= 0 else -0.05),
+                           f'{value:.2f}', ha='center', va='bottom' if height >= 0 else 'top', fontsize=8)
             
             plt.tight_layout()
             
+            # Save to bytes
             img_buffer = io.BytesIO()
             plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
             img_buffer.seek(0)
