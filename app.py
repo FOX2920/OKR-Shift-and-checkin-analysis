@@ -30,96 +30,77 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# THAY THẾ TỪ DÒNG IMPORT ĐẾN HẾT CLASS PDFReportGenerator
+
+# Thay vì import ReportLab, sử dụng matplotlib
 import io
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.pdfgen import canvas
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 
 class PDFReportGenerator:
-    """Generate PDF reports for OKR analysis with Vietnamese font support"""
+    """Generate PDF reports for OKR analysis using matplotlib instead of ReportLab"""
     
     def __init__(self):
-        self.styles = getSampleStyleSheet()
-        self.register_vietnamese_fonts()
-        self.setup_custom_styles()
-    
+        # Set up matplotlib for Vietnamese text support
+        plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'sans-serif']
+        plt.rcParams['font.size'] = 10
+        plt.rcParams['axes.unicode_minus'] = False
+        
     def register_vietnamese_fonts(self):
-        """Register Vietnamese-compatible fonts"""
-        try:
-            # Sử dụng DejaVu Sans - font mặc định có hỗ trợ Unicode tốt
-            # Hoặc bạn có thể tải font .ttf và đặt trong thư mục fonts/
-            
-            # Cách 1: Sử dụng font hệ thống (recommend cho GitHub deployment)
-            pdfmetrics.registerFont(TTFont('Vietnamese', 'DejaVuSans.ttf'))
-            pdfmetrics.registerFont(TTFont('Vietnamese-Bold', 'DejaVuSans-Bold.ttf'))
-            
-            # Nếu không có DejaVu Sans, fallback về Helvetica với encoding
-            self.font_name = 'Vietnamese'
-            self.font_bold = 'Vietnamese-Bold'
-            
-        except:
-            # Fallback: Sử dụng Helvetica với UTF-8 encoding
-            self.font_name = 'Helvetica'
-            self.font_bold = 'Helvetica-Bold'
-            print("Warning: Using fallback fonts. Vietnamese characters may not display correctly.")
+        """Dummy method for compatibility - no longer needed with matplotlib"""
+        pass
     
     def setup_custom_styles(self):
-        """Setup custom styles for PDF with Vietnamese font support"""
-        # Title style
-        self.styles.add(ParagraphStyle(
-            name='CustomTitle',
-            parent=self.styles['Heading1'],
-            fontSize=18,
-            spaceAfter=30,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#2c3e50'),
-            fontName=self.font_bold,
-            encoding='utf-8'
-        ))
+        """Dummy method for compatibility - no longer needed with matplotlib"""
+        pass
         
-        # Section header style
-        self.styles.add(ParagraphStyle(
-            name='SectionHeader',
-            parent=self.styles['Heading2'],
-            fontSize=14,
-            spaceAfter=12,
-            spaceBefore=20,
-            textColor=colors.HexColor('#3498db'),
-            fontName=self.font_bold,
-            encoding='utf-8'
-        ))
-        
-        # Normal text style
-        self.styles.add(ParagraphStyle(
-            name='CustomNormal',
-            parent=self.styles['Normal'],
-            fontSize=10,
-            spaceAfter=6,
-            alignment=TA_JUSTIFY,
-            fontName=self.font_name,
-            encoding='utf-8'
-        ))
-    
     def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
                          members_with_goals_no_checkins, okr_shifts):
-        """Create comprehensive PDF report with Vietnamese font support"""
+        """Create comprehensive PDF report using matplotlib"""
         
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
-        story = []
         
-        # Title với encoding UTF-8
+        with PdfPages(buffer) as pdf:
+            # Page 1: Title and Summary
+            self._create_title_page(pdf, selected_cycle, analyzer, members_without_goals, 
+                                  members_without_checkins, members_with_goals_no_checkins, okr_shifts)
+            
+            # Page 2: Charts and Analysis
+            self._create_charts_page(pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts)
+            
+            # Page 3: Detailed Tables
+            self._create_tables_page(pdf, members_without_goals, members_without_checkins, okr_shifts)
+            
+            # Page 4: Checkin Analysis
+            self._create_checkin_page(pdf, analyzer)
+        
+        buffer.seek(0)
+        return buffer
+    
+    def _create_title_page(self, pdf, selected_cycle, analyzer, members_without_goals, 
+                          members_without_checkins, members_with_goals_no_checkins, okr_shifts):
+        """Create title page with summary statistics"""
+        
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4 size
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
         current_date = datetime.now().strftime("%d/%m/%Y")
-        title = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
-        story.append(Paragraph(title.encode('utf-8').decode('utf-8'), self.styles['CustomTitle']))
-        story.append(Spacer(1, 20))
+        
+        # Title
+        ax.text(5, 13, 'BÁO CÁO TIẾN ĐỘ OKR & CHECKIN', 
+                fontsize=20, fontweight='bold', ha='center', color='#2c3e50')
+        ax.text(5, 12.3, f'{selected_cycle["name"]}', 
+                fontsize=16, fontweight='bold', ha='center', color='#3498db')
+        ax.text(5, 11.8, f'Ngày báo cáo: {current_date}', 
+                fontsize=12, ha='center', color='#7f8c8d')
+        
+        # Add line separator
+        ax.plot([1, 9], [11.3, 11.3], color='#3498db', linewidth=2)
         
         # Summary statistics
         total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
@@ -130,174 +111,279 @@ class PDFReportGenerator:
         stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
         issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
         
-        # Summary table
-        story.append(Paragraph("TỔNG QUAN", self.styles['SectionHeader']))
+        # Create summary boxes
+        y_start = 10.5
+        box_height = 0.8
+        box_width = 7
+        
+        # Summary data
         summary_data = [
-            ['Chỉ số', 'Giá trị', 'Tỷ lệ'],
-            ['Tổng nhân viên', str(total_members), '100%'],
-            ['Có OKR', str(members_with_goals), f"{(members_with_goals/total_members*100):.1f}%" if total_members > 0 else "0%"],
-            ['Có Checkin', str(members_with_checkins), f"{(members_with_checkins/total_members*100):.1f}%" if total_members > 0 else "0%"],
-            ['Nhân viên tiến bộ', str(progress_users), f"{(progress_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
-            ['Nhân viên ổn định', str(stable_users), f"{(stable_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
-            ['Nhân viên cần hỗ trợ', str(issue_users), f"{(issue_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"]
+            ('TỔNG QUAN', '#3498db', [
+                f'Tổng nhân viên: {total_members}',
+                f'Có OKR: {members_with_goals} ({(members_with_goals/total_members*100):.1f}%)' if total_members > 0 else 'Có OKR: 0',
+                f'Có Checkin: {members_with_checkins} ({(members_with_checkins/total_members*100):.1f}%)' if total_members > 0 else 'Có Checkin: 0'
+            ]),
+            ('PHÂN TÍCH TIẾN ĐỘ', '#27AE60', [
+                f'Nhân viên tiến bộ: {progress_users}',
+                f'Nhân viên ổn định: {stable_users}',
+                f'Nhân viên cần hỗ trợ: {issue_users}'
+            ])
         ]
         
-        summary_table = Table(summary_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
-        summary_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('FONTNAME', (0, 1), (-1, -1), self.font_name),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        story.append(summary_table)
-        story.append(Spacer(1, 20))
+        y_pos = y_start
+        for title, color, items in summary_data:
+            # Draw box
+            rect = patches.Rectangle((1.5, y_pos - box_height), box_width, box_height, 
+                                   linewidth=2, edgecolor=color, facecolor=color, alpha=0.1)
+            ax.add_patch(rect)
+            
+            # Title
+            ax.text(5, y_pos - 0.2, title, fontsize=14, fontweight='bold', 
+                   ha='center', color=color)
+            
+            # Items
+            for i, item in enumerate(items):
+                ax.text(2, y_pos - 0.5 - (i * 0.15), f'• {item}', fontsize=11, color='#2c3e50')
+            
+            y_pos -= 2
         
-        # Goal distribution chart
-        goal_chart_data = {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)}
-        goal_chart_buffer = self.create_summary_chart(goal_chart_data, 'Phân bố trạng thái OKR', 'pie')
-        if goal_chart_buffer:
-            story.append(Paragraph("PHÂN BỐ TRẠNG THÁI OKR", self.styles['SectionHeader']))
-            story.append(Image(goal_chart_buffer, width=6*inch, height=3*inch))
-            story.append(Spacer(1, 15))
+        # Key insights box
+        insights_y = 6
+        rect = patches.Rectangle((1.5, insights_y - 2), box_width, 1.8, 
+                               linewidth=2, edgecolor='#e74c3c', facecolor='#e74c3c', alpha=0.1)
+        ax.add_patch(rect)
+        
+        ax.text(5, insights_y - 0.2, 'ĐIỂM CẦN QUAN TÂM', fontsize=14, fontweight='bold', 
+               ha='center', color='#e74c3c')
+        
+        insights = [
+            f'Nhân viên chưa có OKR: {len(members_without_goals)} người',
+            f'Nhân viên chưa checkin: {len(members_without_checkins)} người',
+            f'Có OKR nhưng chưa checkin: {len(members_with_goals_no_checkins)} người'
+        ]
+        
+        for i, insight in enumerate(insights):
+            ax.text(2, insights_y - 0.7 - (i * 0.3), f'⚠️ {insight}', fontsize=11, color='#e74c3c')
+        
+        # Footer
+        ax.text(5, 1, 'A Plus Mineral Material Corporation', 
+                fontsize=14, fontweight='bold', ha='center', color='#2c3e50')
+        ax.text(5, 0.6, 'Báo cáo được tạo tự động bởi hệ thống OKR Analysis', 
+                fontsize=10, ha='center', color='#7f8c8d')
+        
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+    
+    def _create_charts_page(self, pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts):
+        """Create page with charts and visualizations"""
+        
+        fig = plt.figure(figsize=(8.27, 11.69))
+        
+        # Chart 1: Goal Distribution (Pie Chart)
+        ax1 = plt.subplot(3, 2, 1)
+        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+        members_with_goals = total_members - len(members_without_goals)
+        
+        if total_members > 0:
+            sizes = [members_with_goals, len(members_without_goals)]
+            labels = ['Có OKR', 'Chưa có OKR']
+            colors = ['#27AE60', '#E74C3C']
+            
+            wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                             colors=colors, startangle=90)
+            ax1.set_title('Phân bố trạng thái OKR', fontweight='bold', pad=20)
+        
+        # Chart 2: Checkin Distribution (Pie Chart)
+        ax2 = plt.subplot(3, 2, 2)
+        members_with_checkins = total_members - len(members_without_checkins)
+        
+        if total_members > 0:
+            sizes = [members_with_checkins, len(members_without_checkins)]
+            labels = ['Có Checkin', 'Chưa có Checkin']
+            colors = ['#3498DB', '#F39C12']
+            
+            wedges, texts, autotexts = ax2.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                             colors=colors, startangle=90)
+            ax2.set_title('Phân bố trạng thái Checkin', fontweight='bold', pad=20)
+        
+        # Chart 3: OKR Shifts Bar Chart
+        ax3 = plt.subplot(3, 1, 2)
+        if okr_shifts:
+            top_shifts = okr_shifts[:15]  # Top 15
+            names = [u['user_name'][:15] + '...' if len(u['user_name']) > 15 else u['user_name'] 
+                    for u in top_shifts]
+            values = [u['okr_shift'] for u in top_shifts]
+            
+            colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
+            
+            bars = ax3.bar(range(len(names)), values, color=colors)
+            ax3.set_xticks(range(len(names)))
+            ax3.set_xticklabels(names, rotation=45, ha='right')
+            ax3.set_title('Dịch chuyển OKR (Top 15)', fontweight='bold', pad=20)
+            ax3.set_ylabel('Dịch chuyển OKR')
+            ax3.grid(True, alpha=0.3)
+            
+            # Add value labels on bars
+            for bar, value in zip(bars, values):
+                height = bar.get_height()
+                ax3.text(bar.get_x() + bar.get_width()/2., height + (0.01 if height >= 0 else -0.05),
+                        f'{value:.2f}', ha='center', va='bottom' if height >= 0 else 'top', fontsize=8)
+        
+        # Chart 4: Progress Distribution
+        ax4 = plt.subplot(3, 2, 5)
+        if okr_shifts:
+            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
+            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
+            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0])
+            
+            sizes = [progress_users, stable_users, issue_users]
+            labels = ['Tiến bộ', 'Ổn định', 'Cần hỗ trợ']
+            colors = ['#27AE60', '#F39C12', '#E74C3C']
+            
+            # Filter out zero values
+            non_zero_data = [(size, label, color) for size, label, color in zip(sizes, labels, colors) if size > 0]
+            if non_zero_data:
+                sizes, labels, colors = zip(*non_zero_data)
+                wedges, texts, autotexts = ax4.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                                 colors=colors, startangle=90)
+                ax4.set_title('Phân bố tiến độ nhân viên', fontweight='bold', pad=20)
+        
+        plt.tight_layout()
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+    
+    def _create_tables_page(self, pdf, members_without_goals, members_without_checkins, okr_shifts):
+        """Create page with detailed tables"""
+        
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
+        y_pos = 13.5
+        
+        # Page title
+        ax.text(5, y_pos, 'CHI TIẾT PHÂN TÍCH', fontsize=16, fontweight='bold', 
+               ha='center', color='#2c3e50')
+        y_pos -= 0.8
         
         # Members without goals
         if members_without_goals:
-            story.append(Paragraph(f"NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)", self.styles['SectionHeader']))
+            ax.text(0.5, y_pos, f'NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)', 
+                   fontsize=12, fontweight='bold', color='#e74c3c')
+            y_pos -= 0.4
             
-            # Limit to first 20 for space
-            display_members = members_without_goals[:20]
-            members_data = [['STT', 'Tên', 'Username', 'Chức vụ']]
-            for i, member in enumerate(display_members, 1):
-                members_data.append([
-                    str(i),
-                    member.get('name', ''),
-                    member.get('username', ''),
-                    member.get('job', '')[:25] + '...' if len(member.get('job', '')) > 25 else member.get('job', '')
-                ])
+            # Table header
+            ax.text(0.5, y_pos, 'STT', fontsize=10, fontweight='bold')
+            ax.text(1.5, y_pos, 'Tên', fontsize=10, fontweight='bold')
+            ax.text(4, y_pos, 'Username', fontsize=10, fontweight='bold')
+            ax.text(6.5, y_pos, 'Chức vụ', fontsize=10, fontweight='bold')
             
-            members_table = Table(members_data, colWidths=[0.5*inch, 2*inch, 1.5*inch, 2.5*inch])
-            members_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('FONTNAME', (0, 1), (-1, -1), self.font_name),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP')
-            ]))
-            story.append(members_table)
+            # Draw header line
+            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
+            y_pos -= 0.3
             
-            if len(members_without_goals) > 20:
-                story.append(Spacer(1, 10))
-                story.append(Paragraph(f"... và {len(members_without_goals) - 20} nhân viên khác", self.styles['CustomNormal']))
-            story.append(Spacer(1, 15))
+            # Table rows (limit to first 15)
+            for i, member in enumerate(members_without_goals[:15], 1):
+                if y_pos < 1:
+                    break
+                ax.text(0.5, y_pos, str(i), fontsize=9)
+                ax.text(1.5, y_pos, member.get('name', '')[:20], fontsize=9)
+                ax.text(4, y_pos, member.get('username', ''), fontsize=9)
+                ax.text(6.5, y_pos, member.get('job', '')[:25], fontsize=9)
+                y_pos -= 0.25
+            
+            if len(members_without_goals) > 15:
+                ax.text(0.5, y_pos, f'... và {len(members_without_goals) - 15} nhân viên khác', 
+                       fontsize=9, style='italic', color='#7f8c8d')
+            
+            y_pos -= 0.5
         
-        story.append(PageBreak())
-        
-        # OKR Shifts analysis
-        if okr_shifts:
-            story.append(Paragraph("PHÂN TÍCH DỊCH CHUYỂN OKR", self.styles['SectionHeader']))
-            
-            # OKR shifts chart
-            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]}
-            okr_chart_buffer = self.create_summary_chart(okr_shifts_data, 'Dịch chuyển OKR (Top 15)', 'bar')
-            if okr_chart_buffer:
-                story.append(Image(okr_chart_buffer, width=7*inch, height=4*inch))
-                story.append(Spacer(1, 15))
-            
-            # Top performers table
+        # Top performers
+        if okr_shifts and y_pos > 3:
             top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10]
             if top_performers:
-                story.append(Paragraph("TOP 10 NHÂN VIÊN TIẾN BỘ NHẤT", self.styles['SectionHeader']))
+                ax.text(0.5, y_pos, f'TOP NHÂN VIÊN TIẾN BỘ ({len(top_performers)} người)', 
+                       fontsize=12, fontweight='bold', color='#27AE60')
+                y_pos -= 0.4
                 
-                perf_data = [['STT', 'Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', 'Giá trị trước']]
+                # Table header
+                ax.text(0.5, y_pos, 'STT', fontsize=10, fontweight='bold')
+                ax.text(1.5, y_pos, 'Nhân viên', fontsize=10, fontweight='bold')
+                ax.text(4.5, y_pos, 'Dịch chuyển', fontsize=10, fontweight='bold')
+                ax.text(6.5, y_pos, 'Hiện tại', fontsize=10, fontweight='bold')
+                ax.text(8, y_pos, 'Trước đó', fontsize=10, fontweight='bold')
+                
+                # Draw header line
+                ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
+                y_pos -= 0.3
+                
+                # Table rows
                 for i, user in enumerate(top_performers, 1):
-                    perf_data.append([
-                        str(i),
-                        user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
-                        f"{user['okr_shift']:.2f}",
-                        f"{user['current_value']:.2f}",
-                        f"{user['last_friday_value']:.2f}"
-                    ])
-                
-                perf_table = Table(perf_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
-                perf_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
-                    ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('FONTNAME', (0, 1), (-1, -1), self.font_name),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
-                ]))
-                story.append(perf_table)
-                story.append(Spacer(1, 20))
+                    if y_pos < 1:
+                        break
+                    ax.text(0.5, y_pos, str(i), fontsize=9)
+                    ax.text(1.5, y_pos, user['user_name'][:20], fontsize=9)
+                    ax.text(4.5, y_pos, f"{user['okr_shift']:.2f}", fontsize=9, color='#27AE60')
+                    ax.text(6.5, y_pos, f"{user['current_value']:.2f}", fontsize=9)
+                    ax.text(8, y_pos, f"{user['last_friday_value']:.2f}", fontsize=9)
+                    y_pos -= 0.25
         
-        # Get checkin behavior data for additional analysis
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+    
+    def _create_checkin_page(self, pdf, analyzer):
+        """Create page with checkin analysis"""
+        
+        # Get checkin behavior data
         period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
         
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
+        y_pos = 13.5
+        
+        # Page title
+        ax.text(5, y_pos, 'PHÂN TÍCH HOẠT ĐỘNG CHECKIN', fontsize=16, fontweight='bold', 
+               ha='center', color='#2c3e50')
+        y_pos -= 0.8
+        
         if overall_checkins:
-            story.append(Paragraph("TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN", self.styles['SectionHeader']))
+            ax.text(0.5, y_pos, f'TOP NHÂN VIÊN HOẠT ĐỘNG NHẤT ({len(overall_checkins[:20])} người)', 
+                   fontsize=12, fontweight='bold', color='#3498db')
+            y_pos -= 0.4
             
-            # Top 15 most active checkin users
-            top_checkin_users = overall_checkins[:15]
-            checkin_data = [['STT', 'Nhân viên', 'Tổng checkin', 'Tần suất/tuần', 'Checkin tuần trước']]
+            # Table header
+            ax.text(0.5, y_pos, 'STT', fontsize=10, fontweight='bold')
+            ax.text(1.5, y_pos, 'Nhân viên', fontsize=10, fontweight='bold')
+            ax.text(4.5, y_pos, 'Tổng checkin', fontsize=10, fontweight='bold')
+            ax.text(6.5, y_pos, 'Tần suất/tuần', fontsize=10, fontweight='bold')
+            ax.text(8.5, y_pos, 'Tuần trước', fontsize=10, fontweight='bold')
             
-            for i, user in enumerate(top_checkin_users, 1):
-                checkin_data.append([
-                    str(i),
-                    user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
-                    str(user.get('total_checkins', 0)),
-                    f"{user.get('checkin_frequency_per_week', 0):.2f}",
-                    str(user.get('last_week_checkins', 0))
-                ])
+            # Draw header line
+            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
+            y_pos -= 0.3
             
-            checkin_table = Table(checkin_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
-            checkin_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('FONTNAME', (0, 1), (-1, -1), self.font_name),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
-            story.append(checkin_table)
+            # Table rows (top 20)
+            for i, user in enumerate(overall_checkins[:20], 1):
+                if y_pos < 1:
+                    break
+                ax.text(0.5, y_pos, str(i), fontsize=9)
+                ax.text(1.5, y_pos, user['user_name'][:20], fontsize=9)
+                ax.text(4.5, y_pos, str(user.get('total_checkins', 0)), fontsize=9)
+                ax.text(6.5, y_pos, f"{user.get('checkin_frequency_per_week', 0):.2f}", fontsize=9)
+                ax.text(8.5, y_pos, str(user.get('last_week_checkins', 0)), fontsize=9)
+                y_pos -= 0.25
+        else:
+            ax.text(5, y_pos, 'Không có dữ liệu checkin', fontsize=12, ha='center', color='#7f8c8d')
         
-        # Footer
-        story.append(Spacer(1, 30))
-        footer_text = f"""
-        <para align="center">
-        <b>A Plus Mineral Material Corporation</b><br/>
-        Báo cáo được tạo tự động bởi hệ thống OKR Analysis<br/>
-        Ngày tạo: {current_date}
-        </para>
-        """
-        story.append(Paragraph(footer_text, self.styles['CustomNormal']))
-        
-        # Build PDF
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
     
     def create_summary_chart(self, data, title, chart_type='bar'):
-        """Create matplotlib chart for PDF with Vietnamese font support"""
+        """Create matplotlib chart for PDF with Vietnamese font support - kept for compatibility"""
         try:
             # Thiết lập font cho matplotlib để hỗ trợ tiếng Việt
             plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei']
