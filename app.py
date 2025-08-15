@@ -975,208 +975,287 @@ class EmailReportGenerator:
         return f"<div class='modern-chart'><h3>{title}</h3><p>Loại biểu đồ không được hỗ trợ</p></div>"
 
     def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                           members_with_goals_no_checkins, okr_shifts):
-        """Create HTML email content with fallback charts"""
-        
-        current_date = datetime.now().strftime("%d/%m/%Y")
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-        
-        # Calculate statistics
-        members_with_goals = total_members - len(members_without_goals)
-        members_with_checkins = total_members - len(members_without_checkins)
-        
-        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
-        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
-        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
-        
-        # Create visual charts
-        goal_chart = self.create_visual_html_chart(
-            {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
-            'pie', 'Phân bố trạng thái OKR'
-        )
-        
-        # Create checkin table instead of chart
-        checkins_table = self._generate_table_html(members_without_checkins,
-                                                 ["Tên", "Username", "Chức vụ", "Có OKR"],
-                                                 ["name", "username", "job", "has_goal"])
-        
-        okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
-        okr_shifts_chart = self.create_visual_html_chart(
-            okr_shifts_data, 'bar', 'Dịch chuyển OKR của nhân viên (Top 15)'
-        )
-        
-        # Generate tables
-        goals_table = self._generate_table_html(members_without_goals, 
-                                               ["Tên", "Username", "Chức vụ"], 
-                                               ["name", "username", "job"])
-        
-        goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
-                                                          ["Tên", "Username", "Chức vụ"],
-                                                          ["name", "username", "job"])
-        
-        # Top performers table
-        top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
-        top_performers_table = self._generate_okr_table_html(top_performers)
-        
-        # Issue users table
-        issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
-        issue_performers_table = self._generate_okr_table_html(issue_performers)
-        
-        html_content = f"""
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
-                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
-                .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
-                .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
-                .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
-                .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
-                .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
-                .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
-                .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
-                .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
-                .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
-                table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-                th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
-                td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
-                tr:nth-child(even) {{ background: #f8f9fa; }}
-                tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
-                .chart-container {{ text-align: center; margin: 30px 0; }}
-                .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
-                .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
-                .positive {{ color: #27AE60; font-weight: bold; }}
-                .negative {{ color: #E74C3C; font-weight: bold; }}
-                .neutral {{ color: #F39C12; font-weight: bold; }}
-                .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
-                .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
-                .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
-                .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
-                .alert strong {{ font-weight: 600; }}
-                @media (max-width: 768px) {{
-                    .metrics {{ flex-direction: column; }}
-                    .modern-chart {{ padding: 20px; }}
-                    .section {{ padding: 20px; }}
-                    table {{ font-size: 12px; }}
-                    th, td {{ padding: 10px 8px; }}
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
-                <h2>{selected_cycle['name']}</h2>
-                <p>Ngày báo cáo: {current_date}</p>
-            </div>
+                               members_with_goals_no_checkins, okr_shifts, overall_checkins=None):
+            """Create HTML email content with fallback charts"""
             
-            <div class="section">
-                <h2>📈 TỔNG QUAN</h2>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-value">{total_members}</div>
-                        <div class="metric-label">Tổng nhân viên</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{members_with_goals}</div>
-                        <div class="metric-label">Có OKR</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{members_with_checkins}</div>
-                        <div class="metric-label">Có Checkin</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{progress_users}</div>
-                        <div class="metric-label">Tiến bộ</div>
-                    </div>
-                </div>
-            </div>
+            current_date = datetime.now().strftime("%d/%m/%Y")
+            total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
             
-            <div class="section">
-                <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
-                <div class="chart-container">
-                    {checkins_table}
-                </div>
-                <div class="alert alert-info">
-                    <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
-                </div>
-            </div>
+            # Calculate statistics
+            members_with_goals = total_members - len(members_without_goals)
+            members_with_checkins = total_members - len(members_without_checkins)
             
-            <div class="section">
-                <h2>📊 DỊCH CHUYỂN OKR</h2>
-                <div class="chart-container">
-                    {okr_shifts_chart}
+            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+            
+            # Create visual charts
+            goal_chart = self.create_visual_html_chart(
+                {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
+                'pie', 'Phân bố trạng thái OKR'
+            )
+            
+            # Create checkin table instead of chart
+            checkins_table = self._generate_table_html(members_without_checkins,
+                                                     ["Tên", "Username", "Chức vụ", "Có OKR"],
+                                                     ["name", "username", "job", "has_goal"])
+            
+            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
+            okr_shifts_chart = self.create_visual_html_chart(
+                okr_shifts_data, 'bar', 'Dịch chuyển OKR của nhân viên (Top 15)'
+            )
+            
+            # Generate tables
+            goals_table = self._generate_table_html(members_without_goals, 
+                                                   ["Tên", "Username", "Chức vụ"], 
+                                                   ["name", "username", "job"])
+            
+            goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
+                                                              ["Tên", "Username", "Chức vụ"],
+                                                              ["name", "username", "job"])
+            
+            # Top performers table
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
+            top_performers_table = self._generate_okr_table_html(top_performers)
+            
+            # Issue users table
+            issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
+            issue_performers_table = self._generate_okr_table_html(issue_performers)
+            
+            # Most Active Overall table
+            most_active_table = ""
+            if overall_checkins:
+                most_active_table = self._generate_most_active_table_html(overall_checkins)
+            
+            html_content = f"""
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
+                    .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
+                    .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
+                    .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
+                    .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
+                    .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
+                    .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
+                    .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
+                    .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
+                    .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
+                    .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
+                    table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
+                    th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
+                    td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
+                    tr:nth-child(even) {{ background: #f8f9fa; }}
+                    tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
+                    .chart-container {{ text-align: center; margin: 30px 0; }}
+                    .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
+                    .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
+                    .positive {{ color: #27AE60; font-weight: bold; }}
+                    .negative {{ color: #E74C3C; font-weight: bold; }}
+                    .neutral {{ color: #F39C12; font-weight: bold; }}
+                    .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
+                    .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
+                    .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
+                    .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
+                    .alert strong {{ font-weight: 600; }}
+                    @media (max-width: 768px) {{
+                        .metrics {{ flex-direction: column; }}
+                        .modern-chart {{ padding: 20px; }}
+                        .section {{ padding: 20px; }}
+                        table {{ font-size: 12px; }}
+                        th, td {{ padding: 10px 8px; }}
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
+                    <h2>{selected_cycle['name']}</h2>
+                    <p>Ngày báo cáo: {current_date}</p>
                 </div>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-value positive">{progress_users}</div>
-                        <div class="metric-label">Tiến bộ</div>
+                
+                <div class="section">
+                    <h2>📈 TỔNG QUAN</h2>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-value">{total_members}</div>
+                            <div class="metric-label">Tổng nhân viên</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{members_with_goals}</div>
+                            <div class="metric-label">Có OKR</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{members_with_checkins}</div>
+                            <div class="metric-label">Có Checkin</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{progress_users}</div>
+                            <div class="metric-label">Tiến bộ</div>
+                        </div>
                     </div>
-                    <div class="metric">
-                        <div class="metric-value neutral">{stable_users}</div>
-                        <div class="metric-label">Ổn định</div>
+                </div>
+                
+                <div class="section">
+                    <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
+                    <div class="chart-container">
+                        {checkins_table}
                     </div>
-                    <div class="metric">
-                        <div class="metric-value negative">{issue_users}</div>
-                        <div class="metric-label">Cần quan tâm</div>
+                    <div class="alert alert-info">
+                        <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
                     </div>
                 </div>
-            </div>
-        """
-        
-        # Add detailed tables
-        if members_without_goals:
-            html_content += f"""
-            <div class="section">
-                <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
-                <div class="alert alert-warning">
-                    <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
+                
+                <div class="section">
+                    <h2>📊 DỊCH CHUYỂN OKR</h2>
+                    <div class="chart-container">
+                        {okr_shifts_chart}
+                    </div>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-value positive">{progress_users}</div>
+                            <div class="metric-label">Tiến bộ</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value neutral">{stable_users}</div>
+                            <div class="metric-label">Ổn định</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value negative">{issue_users}</div>
+                            <div class="metric-label">Cần quan tâm</div>
+                        </div>
+                    </div>
                 </div>
-                {goals_table}
-            </div>
             """
-        
-        if members_with_goals_no_checkins:
-            html_content += f"""
-            <div class="section">
-                <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
-                <div class="alert alert-warning">
-                    <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
+            
+            # Add Most Active Overall section
+            if most_active_table:
+                html_content += f"""
+                <div class="section">
+                    <h2>🏆 NHÂN VIÊN HOẠT ĐỘNG TÍCH CỰC NHẤT</h2>
+                    <div class="alert alert-info">
+                        <strong>Thống kê:</strong> Danh sách top 20 nhân viên có số lượng checkin cao nhất tính từ đầu quý đến nay
+                    </div>
+                    {most_active_table}
                 </div>
-                {goals_no_checkins_table}
-            </div>
-            """
-        
-        if top_performers:
-            html_content += f"""
-            <div class="section">
-                <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT</h2>
-                {top_performers_table}
-            </div>
-            """
-        
-        if issue_performers:
-            html_content += f"""
-            <div class="section">
-                <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ</h2>
-                <div class="alert alert-warning">
-                    <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
+                """
+            
+            # Add detailed tables
+            if members_without_goals:
+                html_content += f"""
+                <div class="section">
+                    <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
+                    <div class="alert alert-warning">
+                        <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
+                    </div>
+                    {goals_table}
                 </div>
-                {issue_performers_table}
-            </div>
+                """
+            
+            if members_with_goals_no_checkins:
+                html_content += f"""
+                <div class="section">
+                    <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
+                    <div class="alert alert-warning">
+                        <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
+                    </div>
+                    {goals_no_checkins_table}
+                </div>
+                """
+            
+            if top_performers:
+                html_content += f"""
+                <div class="section">
+                    <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT</h2>
+                    {top_performers_table}
+                </div>
+                """
+            
+            if issue_performers:
+                html_content += f"""
+                <div class="section">
+                    <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ</h2>
+                    <div class="alert alert-warning">
+                        <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
+                    </div>
+                    {issue_performers_table}
+                </div>
+                """
+            
+            html_content += """
+                <div class="footer">
+                    <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
+                    <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
+                    <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
+                </div>
+            </body>
+            </html>
             """
-        
-        html_content += """
-            <div class="footer">
-                <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
-                <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
-                <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html_content
+            
+            return html_content
+    
+        def _generate_most_active_table_html(self, overall_checkins):
+            """Generate HTML table for most active users"""
+            if not overall_checkins:
+                return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
+            
+            # Sort by total checkins and take top 20
+            sorted_checkins = sorted(overall_checkins, key=lambda x: x.get('total_checkins', 0), reverse=True)[:20]
+            
+            html = """
+            <table>
+                <thead>
+                    <tr>
+                        <th>🏆 Xếp hạng</th>
+                        <th>👤 Nhân viên</th>
+                        <th>📊 Tổng checkin</th>
+                        <th>⚡ Tần suất/tuần (quý)</th>
+                        <th>📅 Checkin tuần trước</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            
+            for i, item in enumerate(sorted_checkins):
+                rank = i + 1
+                name = item.get('user_name', 'Unknown')
+                total_checkins = item.get('total_checkins', 0)
+                frequency = item.get('checkin_frequency_per_week', 0)
+                last_week = item.get('last_week_checkins', 0)
+                
+                # Add rank styling
+                rank_style = ""
+                if rank == 1:
+                    rank_style = "style='color: #FFD700; font-weight: bold;'"  # Gold
+                elif rank == 2:
+                    rank_style = "style='color: #C0C0C0; font-weight: bold;'"  # Silver
+                elif rank == 3:
+                    rank_style = "style='color: #CD7F32; font-weight: bold;'"  # Bronze
+                
+                row_class = "even" if i % 2 == 0 else "odd"
+                
+                # Add icons for top 3
+                rank_display = rank
+                if rank == 1:
+                    rank_display = "🥇 1"
+                elif rank == 2:
+                    rank_display = "🥈 2"
+                elif rank == 3:
+                    rank_display = "🥉 3"
+                
+                html += f"""
+                <tr class='{row_class}'>
+                    <td {rank_style}><strong>{rank_display}</strong></td>
+                    <td><strong>{name}</strong></td>
+                    <td><span style='color: #3498db; font-weight: 600;'>{total_checkins}</span></td>
+                    <td><span style='color: #27AE60; font-weight: 600;'>{frequency:.2f}</span></td>
+                    <td><span style='color: #7f8c8d; font-weight: 600;'>{last_week}</span></td>
+                </tr>
+                """
+            
+            html += "</tbody></table>"
+            return html
 
     def _generate_table_html(self, data, headers, fields):
         """Generate HTML table from data"""
