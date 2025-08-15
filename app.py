@@ -19,6 +19,8 @@ from email import encoders
 import base64
 from io import BytesIO
 import plotly.io as pio
+import tempfile
+from weasyprint import HTML, CSS
 
 warnings.filterwarnings('ignore')
 
@@ -1348,23 +1350,262 @@ class EmailReportGenerator:
         html += "</tbody></table>"
         return html
 
+    def create_pdf_report(self, html_content, filename_prefix="okr_report"):
+        """Create PDF report from HTML content"""
+        try:
+            # Create a temporary file for the PDF
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            temp_file = tempfile.NamedTemporaryFile(
+                delete=False, 
+                suffix='.pdf', 
+                prefix=f'{filename_prefix}_{timestamp}_'
+            )
+            
+            # Enhanced CSS for better PDF formatting
+            pdf_css = CSS(string="""
+                @page {
+                    size: A4;
+                    margin: 2cm;
+                    @bottom-center {
+                        content: "Trang " counter(page) " / " counter(pages);
+                        font-size: 10px;
+                        color: #7f8c8d;
+                    }
+                }
+                
+                body {
+                    font-family: 'DejaVu Sans', sans-serif;
+                    font-size: 11px;
+                    line-height: 1.4;
+                    color: #2c3e50;
+                }
+                
+                .header {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    text-align: center;
+                    margin-bottom: 20px;
+                    page-break-inside: avoid;
+                }
+                
+                .header h1 {
+                    margin: 0 0 8px 0;
+                    font-size: 20px;
+                    font-weight: bold;
+                }
+                
+                .header h2 {
+                    margin: 0 0 8px 0;
+                    font-size: 16px;
+                    font-weight: normal;
+                }
+                
+                .header p {
+                    margin: 0;
+                    font-size: 12px;
+                }
+                
+                .section {
+                    background: white;
+                    padding: 15px;
+                    margin: 15px 0;
+                    border-radius: 8px;
+                    border: 1px solid #e9ecef;
+                    page-break-inside: avoid;
+                }
+                
+                .section h2 {
+                    color: #2c3e50;
+                    border-bottom: 2px solid #3498db;
+                    padding-bottom: 5px;
+                    margin-bottom: 15px;
+                    font-size: 16px;
+                    page-break-after: avoid;
+                }
+                
+                .metrics {
+                    display: flex;
+                    justify-content: space-around;
+                    margin: 15px 0;
+                    flex-wrap: wrap;
+                }
+                
+                .metric {
+                    background: #f8f9fa;
+                    padding: 15px;
+                    border-radius: 8px;
+                    text-align: center;
+                    margin: 5px;
+                    min-width: 100px;
+                    flex: 1;
+                    border: 1px solid #e9ecef;
+                }
+                
+                .metric-value {
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #3498db;
+                    margin-bottom: 5px;
+                }
+                
+                .metric-label {
+                    font-size: 10px;
+                    color: #7f8c8d;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 15px 0;
+                    background: white;
+                    font-size: 10px;
+                    page-break-inside: auto;
+                }
+                
+                th {
+                    padding: 8px;
+                    text-align: left;
+                    background: #3498db;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 9px;
+                    text-transform: uppercase;
+                }
+                
+                td {
+                    padding: 6px 8px;
+                    border-bottom: 1px solid #ecf0f1;
+                    font-size: 9px;
+                }
+                
+                tr:nth-child(even) {
+                    background: #f8f9fa;
+                }
+                
+                .modern-chart {
+                    background: #f8f9fa;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin: 15px 0;
+                    border: 1px solid #e9ecef;
+                    page-break-inside: avoid;
+                }
+                
+                .modern-chart h3 {
+                    text-align: center;
+                    margin-bottom: 15px;
+                    color: #2c3e50;
+                    font-size: 14px;
+                }
+                
+                .alert {
+                    padding: 10px;
+                    margin: 10px 0;
+                    border-radius: 5px;
+                    border-left: 4px solid;
+                    font-size: 10px;
+                }
+                
+                .alert-warning {
+                    background: #fff3cd;
+                    border-left-color: #f39c12;
+                    color: #856404;
+                }
+                
+                .alert-info {
+                    background: #d1ecf1;
+                    border-left-color: #3498db;
+                    color: #0c5460;
+                }
+                
+                .footer {
+                    text-align: center;
+                    margin-top: 30px;
+                    padding: 15px;
+                    background: #2c3e50;
+                    color: white;
+                    border-radius: 8px;
+                    font-size: 10px;
+                    page-break-inside: avoid;
+                }
+                
+                .positive {
+                    color: #27AE60;
+                    font-weight: bold;
+                }
+                
+                .negative {
+                    color: #E74C3C;
+                    font-weight: bold;
+                }
+                
+                .neutral {
+                    color: #F39C12;
+                    font-weight: bold;
+                }
+            """)
+            
+            # Generate PDF
+            html_doc = HTML(string=html_content)
+            html_doc.write_pdf(temp_file.name, stylesheets=[pdf_css])
+            
+            # Read the PDF content
+            with open(temp_file.name, 'rb') as f:
+                pdf_content = f.read()
+            
+            # Clean up temporary file
+            temp_file.close()
+            os.unlink(temp_file.name)
+            
+            return pdf_content
+            
+        except Exception as e:
+            st.error(f"Error creating PDF report: {e}")
+            return None
+
     def send_email_report(self, email_from, password, email_to, subject, html_content, 
-                         company_name="A Plus Mineral Material Corporation"):
-        """Send email report with improved compatibility"""
+                         pdf_content=None, company_name="A Plus Mineral Material Corporation"):
+        """Send email report with PDF attachment and improved compatibility"""
         try:
             # Create message
-            message = MIMEMultipart('related')  # Changed to 'related' for better image support
+            message = MIMEMultipart('mixed')  # Changed to 'mixed' for attachments
             message['From'] = f"OKR System {company_name} <{email_from}>"
             message['To'] = email_to
             message['Subject'] = subject
             
-            # Create message container
+            # Create message container for HTML content
             msg_alternative = MIMEMultipart('alternative')
             message.attach(msg_alternative)
             
             # Add HTML content
             html_part = MIMEText(html_content, 'html', 'utf-8')
             msg_alternative.attach(html_part)
+            
+            # Add PDF attachment if provided
+            if pdf_content:
+                try:
+                    pdf_attachment = MIMEBase('application', 'pdf')
+                    pdf_attachment.set_payload(pdf_content)
+                    encoders.encode_base64(pdf_attachment)
+                    
+                    # Generate filename with timestamp
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"OKR_Report_{timestamp}.pdf"
+                    
+                    pdf_attachment.add_header(
+                        'Content-Disposition', 
+                        f'attachment; filename={filename}'
+                    )
+                    pdf_attachment.add_header('Content-Type', 'application/pdf')
+                    
+                    message.attach(pdf_attachment)
+                    
+                except Exception as e:
+                    st.warning(f"Could not attach PDF file: {e}")
             
             # Connect to SMTP server
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
@@ -1375,7 +1616,8 @@ class EmailReportGenerator:
             server.send_message(message)
             server.quit()
             
-            return True, "Email sent successfully!"
+            attachment_msg = " với file PDF đính kèm" if pdf_content else ""
+            return True, f"Email đã gửi thành công{attachment_msg}!"
             
         except smtplib.SMTPAuthenticationError:
             return False, "Lỗi xác thực: Vui lòng kiểm tra lại email và mật khẩu"
@@ -1510,17 +1752,25 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         update_progress("Calculating OKR shifts...", 0.6)
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
-        update_progress("Creating email content...", 0.8)
+        update_progress("Creating email content...", 0.7)
         html_content = email_generator.create_email_content(
             analyzer, selected_cycle, members_without_goals, members_without_checkins,
             members_with_goals_no_checkins, okr_shifts
         )
         
+        update_progress("Creating PDF report...", 0.8)
+        pdf_content = email_generator.create_pdf_report(html_content)
+        
+        if pdf_content:
+            st.info("✅ PDF report created successfully!")
+        else:
+            st.warning("⚠️ Could not create PDF report. Email will be sent without PDF attachment.")
+        
         update_progress("Sending email...", 0.9)
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
         success, message = email_generator.send_email_report(
-            email_from, email_password, email_to, subject, html_content
+            email_from, email_password, email_to, subject, html_content, pdf_content
         )
         
         progress_bar.empty()
