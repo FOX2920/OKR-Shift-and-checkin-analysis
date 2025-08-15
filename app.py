@@ -1750,7 +1750,7 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     st.info(f"📊 Tần suất checkin = Tổng checkin ÷ {weeks_in_quarter:.1f} tuần (từ đầu quý đến nay)")
     
     # Select and format columns for display
-    top_overall = overall_df.nlargest(10, 'total_checkins').copy()
+    top_overall = overall_df.nlargest(20, 'total_checkins').copy()
     
     # Create display dataframe with improved formatting
     display_df = top_overall[[
