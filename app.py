@@ -29,8 +29,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
 import io
+import os
+from datetime import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
@@ -38,37 +39,90 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 
 class PDFReportGenerator:
-    """Generate PDF reports for OKR analysis with Vietnamese font support"""
+    """Generate PDF reports for OKR analysis with Vietnamese font support using Noto Sans"""
     
     def __init__(self):
         self.styles = getSampleStyleSheet()
         self.register_vietnamese_fonts()
         self.setup_custom_styles()
+        self.setup_matplotlib_font()
     
     def register_vietnamese_fonts(self):
-        """Register Vietnamese-compatible fonts"""
+        """Register Noto Sans Vietnamese-compatible fonts"""
         try:
-            # Sử dụng DejaVu Sans - font mặc định có hỗ trợ Unicode tốt
-            # Hoặc bạn có thể tải font .ttf và đặt trong thư mục fonts/
+            # Path đến thư mục fonts (có thể điều chỉnh theo cấu trúc project)
+            fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
             
-            # Cách 1: Sử dụng font hệ thống (recommend cho GitHub deployment)
-            pdfmetrics.registerFont(TTFont('Vietnamese', 'DejaVuSans.ttf'))
-            pdfmetrics.registerFont(TTFont('Vietnamese-Bold', 'DejaVuSans-Bold.ttf'))
+            # Đăng ký Noto Sans fonts
+            noto_regular_path = os.path.join(fonts_dir, 'NotoSans-Regular.ttf')
+            noto_bold_path = os.path.join(fonts_dir, 'NotoSans-Bold.ttf')
             
-            # Nếu không có DejaVu Sans, fallback về Helvetica với encoding
-            self.font_name = 'Vietnamese'
-            self.font_bold = 'Vietnamese-Bold'
+            # Kiểm tra xem file font có tồn tại không
+            if os.path.exists(noto_regular_path) and os.path.exists(noto_bold_path):
+                pdfmetrics.registerFont(TTFont('NotoSans', noto_regular_path))
+                pdfmetrics.registerFont(TTFont('NotoSans-Bold', noto_bold_path))
+                
+                self.font_name = 'NotoSans'
+                self.font_bold = 'NotoSans-Bold'
+                print("Successfully registered Noto Sans fonts")
+                
+            else:
+                # Fallback: thử đường dẫn tương đối khác
+                alt_regular_path = 'fonts/NotoSans-Regular.ttf'
+                alt_bold_path = 'fonts/NotoSans-Bold.ttf'
+                
+                if os.path.exists(alt_regular_path) and os.path.exists(alt_bold_path):
+                    pdfmetrics.registerFont(TTFont('NotoSans', alt_regular_path))
+                    pdfmetrics.registerFont(TTFont('NotoSans-Bold', alt_bold_path))
+                    
+                    self.font_name = 'NotoSans'
+                    self.font_bold = 'NotoSans-Bold'
+                    print("Successfully registered Noto Sans fonts (alternative path)")
+                else:
+                    raise FileNotFoundError("Noto Sans font files not found")
             
-        except:
-            # Fallback: Sử dụng Helvetica với UTF-8 encoding
+        except Exception as e:
+            # Fallback: Sử dụng Helvetica với encoding UTF-8
             self.font_name = 'Helvetica'
             self.font_bold = 'Helvetica-Bold'
-            print("Warning: Using fallback fonts. Vietnamese characters may not display correctly.")
+            print(f"Warning: Could not load Noto Sans fonts ({e}). Using fallback fonts. Vietnamese characters may not display correctly.")
+    
+    def setup_matplotlib_font(self):
+        """Setup Noto Sans font for matplotlib charts"""
+        try:
+            fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+            noto_regular_path = os.path.join(fonts_dir, 'NotoSans-Regular.ttf')
+            
+            # Thử đường dẫn chính
+            if os.path.exists(noto_regular_path):
+                # Thêm font vào matplotlib
+                fm.fontManager.addfont(noto_regular_path)
+                plt.rcParams['font.family'] = ['Noto Sans']
+                print("Matplotlib font set to Noto Sans")
+            else:
+                # Thử đường dẫn tương đối
+                alt_path = 'fonts/NotoSans-Regular.ttf'
+                if os.path.exists(alt_path):
+                    fm.fontManager.addfont(alt_path)
+                    plt.rcParams['font.family'] = ['Noto Sans']
+                    print("Matplotlib font set to Noto Sans (alternative path)")
+                else:
+                    # Fallback cho matplotlib
+                    plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei']
+                    print("Using fallback fonts for matplotlib")
+                    
+        except Exception as e:
+            # Fallback cho matplotlib
+            plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei']
+            print(f"Warning: Could not set Noto Sans for matplotlib ({e}). Using fallback fonts.")
     
     def setup_custom_styles(self):
         """Setup custom styles for PDF with Vietnamese font support"""
@@ -80,8 +134,7 @@ class PDFReportGenerator:
             spaceAfter=30,
             alignment=TA_CENTER,
             textColor=colors.HexColor('#2c3e50'),
-            fontName=self.font_bold,
-            encoding='utf-8'
+            fontName=self.font_bold
         ))
         
         # Section header style
@@ -92,8 +145,7 @@ class PDFReportGenerator:
             spaceAfter=12,
             spaceBefore=20,
             textColor=colors.HexColor('#3498db'),
-            fontName=self.font_bold,
-            encoding='utf-8'
+            fontName=self.font_bold
         ))
         
         # Normal text style
@@ -103,8 +155,7 @@ class PDFReportGenerator:
             fontSize=10,
             spaceAfter=6,
             alignment=TA_JUSTIFY,
-            fontName=self.font_name,
-            encoding='utf-8'
+            fontName=self.font_name
         ))
     
     def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
@@ -115,10 +166,10 @@ class PDFReportGenerator:
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
         story = []
         
-        # Title với encoding UTF-8
+        # Title
         current_date = datetime.now().strftime("%d/%m/%Y")
         title = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
-        story.append(Paragraph(title.encode('utf-8').decode('utf-8'), self.styles['CustomTitle']))
+        story.append(Paragraph(title, self.styles['CustomTitle']))
         story.append(Spacer(1, 20))
         
         # Summary statistics
@@ -299,9 +350,6 @@ class PDFReportGenerator:
     def create_summary_chart(self, data, title, chart_type='bar'):
         """Create matplotlib chart for PDF with Vietnamese font support"""
         try:
-            # Thiết lập font cho matplotlib để hỗ trợ tiếng Việt
-            plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei']
-            
             fig, ax = plt.subplots(figsize=(8, 4))
             
             if chart_type == 'pie' and data:
@@ -352,7 +400,6 @@ class PDFReportGenerator:
         except Exception as e:
             print(f"Error creating chart: {e}")
             return None
-    
 
 class OKRAnalysisSystem:
     """OKR Analysis System for Streamlit"""
