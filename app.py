@@ -41,12 +41,12 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 
 class PDFReportGenerator:
-    """Generate PDF reports for OKR analysis using matplotlib instead of ReportLab"""
+    """Generate PDF reports for OKR analysis using matplotlib with improved layout"""
     
     def __init__(self):
         # Set up matplotlib for Vietnamese text support
         plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'sans-serif']
-        plt.rcParams['font.size'] = 10
+        plt.rcParams['font.size'] = 9  # Slightly smaller default font
         plt.rcParams['axes.unicode_minus'] = False
         
     def register_vietnamese_fonts(self):
@@ -82,7 +82,7 @@ class PDFReportGenerator:
     
     def _create_title_page(self, pdf, selected_cycle, analyzer, members_without_goals, 
                           members_without_checkins, members_with_goals_no_checkins, okr_shifts):
-        """Create title page with summary statistics"""
+        """Create title page with summary statistics - Fixed layout"""
         
         fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4 size
         ax.set_xlim(0, 10)
@@ -91,18 +91,24 @@ class PDFReportGenerator:
         
         current_date = datetime.now().strftime("%d/%m/%Y")
         
-        # Title
-        ax.text(5, 13, 'BÁO CÁO TIẾN ĐỘ OKR & CHECKIN', 
-                fontsize=20, fontweight='bold', ha='center', color='#2c3e50')
-        ax.text(5, 12.3, f'{selected_cycle["name"]}', 
-                fontsize=16, fontweight='bold', ha='center', color='#3498db')
-        ax.text(5, 11.8, f'Ngày báo cáo: {current_date}', 
-                fontsize=12, ha='center', color='#7f8c8d')
+        # Title section with proper spacing
+        y_pos = 13.2
+        ax.text(5, y_pos, 'BÁO CÁO TIẾN ĐỘ OKR & CHECKIN', 
+                fontsize=18, fontweight='bold', ha='center', color='#2c3e50')
         
-        # Add line separator
-        ax.plot([1, 9], [11.3, 11.3], color='#3498db', linewidth=2)
+        y_pos -= 0.5
+        ax.text(5, y_pos, f'{selected_cycle["name"]}', 
+                fontsize=14, fontweight='bold', ha='center', color='#3498db')
         
-        # Summary statistics
+        y_pos -= 0.4
+        ax.text(5, y_pos, f'Ngày báo cáo: {current_date}', 
+                fontsize=11, ha='center', color='#7f8c8d')
+        
+        # Add line separator with proper spacing
+        y_pos -= 0.3
+        ax.plot([1, 9], [y_pos, y_pos], color='#3498db', linewidth=2)
+        
+        # Summary statistics with better spacing
         total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
         members_with_goals = total_members - len(members_without_goals)
         members_with_checkins = total_members - len(members_without_checkins)
@@ -111,9 +117,9 @@ class PDFReportGenerator:
         stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
         issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
         
-        # Create summary boxes
-        y_start = 10.5
-        box_height = 0.8
+        # Create summary boxes with improved layout
+        y_pos -= 0.6
+        box_height = 1.2
         box_width = 7
         
         # Summary data
@@ -130,7 +136,6 @@ class PDFReportGenerator:
             ])
         ]
         
-        y_pos = y_start
         for title, color, items in summary_data:
             # Draw box
             rect = patches.Rectangle((1.5, y_pos - box_height), box_width, box_height, 
@@ -138,22 +143,22 @@ class PDFReportGenerator:
             ax.add_patch(rect)
             
             # Title
-            ax.text(5, y_pos - 0.2, title, fontsize=14, fontweight='bold', 
+            ax.text(5, y_pos - 0.25, title, fontsize=13, fontweight='bold', 
                    ha='center', color=color)
             
-            # Items
+            # Items with better spacing
             for i, item in enumerate(items):
-                ax.text(2, y_pos - 0.5 - (i * 0.15), f'• {item}', fontsize=11, color='#2c3e50')
+                ax.text(2, y_pos - 0.6 - (i * 0.2), f'• {item}', fontsize=10, color='#2c3e50')
             
-            y_pos -= 2
+            y_pos -= 2.4  # Increased spacing between sections
         
-        # Key insights box
-        insights_y = 6
-        rect = patches.Rectangle((1.5, insights_y - 2), box_width, 1.8, 
+        # Key insights box with better positioning
+        insights_y = y_pos - 0.2
+        rect = patches.Rectangle((1.5, insights_y - 2.2), box_width, 2.0, 
                                linewidth=2, edgecolor='#e74c3c', facecolor='#e74c3c', alpha=0.1)
         ax.add_patch(rect)
         
-        ax.text(5, insights_y - 0.2, 'ĐIỂM CẦN QUAN TÂM', fontsize=14, fontweight='bold', 
+        ax.text(5, insights_y - 0.25, 'ĐIỂM CẦN QUAN TÂM', fontsize=13, fontweight='bold', 
                ha='center', color='#e74c3c')
         
         insights = [
@@ -163,24 +168,27 @@ class PDFReportGenerator:
         ]
         
         for i, insight in enumerate(insights):
-            ax.text(2, insights_y - 0.7 - (i * 0.3), f'⚠️ {insight}', fontsize=11, color='#e74c3c')
+            ax.text(2, insights_y - 0.8 - (i * 0.3), f'⚠️ {insight}', fontsize=10, color='#e74c3c')
         
-        # Footer
-        ax.text(5, 1, 'A Plus Mineral Material Corporation', 
-                fontsize=14, fontweight='bold', ha='center', color='#2c3e50')
-        ax.text(5, 0.6, 'Báo cáo được tạo tự động bởi hệ thống OKR Analysis', 
-                fontsize=10, ha='center', color='#7f8c8d')
+        # Footer with proper positioning
+        ax.text(5, 1.2, 'A Plus Mineral Material Corporation', 
+                fontsize=13, fontweight='bold', ha='center', color='#2c3e50')
+        ax.text(5, 0.8, 'Báo cáo được tạo tự động bởi hệ thống OKR Analysis', 
+                fontsize=9, ha='center', color='#7f8c8d')
         
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
     
     def _create_charts_page(self, pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with charts and visualizations"""
+        """Create page with charts and visualizations - Fixed layout"""
         
         fig = plt.figure(figsize=(8.27, 11.69))
         
-        # Chart 1: Goal Distribution (Pie Chart)
-        ax1 = plt.subplot(3, 2, 1)
+        # Title
+        fig.suptitle('BIỂU ĐỒ PHÂN TÍCH', fontsize=16, fontweight='bold', y=0.95, color='#2c3e50')
+        
+        # Chart 1: Goal Distribution (Pie Chart) - Top left
+        ax1 = plt.subplot(2, 2, 1)
         total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
         members_with_goals = total_members - len(members_without_goals)
         
@@ -191,10 +199,18 @@ class PDFReportGenerator:
             
             wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
                                              colors=colors, startangle=90)
-            ax1.set_title('Phân bố trạng thái OKR', fontweight='bold', pad=20)
+            ax1.set_title('Phân bố trạng thái OKR', fontsize=11, fontweight='bold', pad=15)
+            
+            # Adjust text size
+            for text in texts:
+                text.set_fontsize(9)
+            for autotext in autotexts:
+                autotext.set_fontsize(8)
+                autotext.set_color('white')
+                autotext.set_weight('bold')
         
-        # Chart 2: Checkin Distribution (Pie Chart)
-        ax2 = plt.subplot(3, 2, 2)
+        # Chart 2: Checkin Distribution (Pie Chart) - Top right
+        ax2 = plt.subplot(2, 2, 2)
         members_with_checkins = total_members - len(members_without_checkins)
         
         if total_members > 0:
@@ -204,33 +220,18 @@ class PDFReportGenerator:
             
             wedges, texts, autotexts = ax2.pie(sizes, labels=labels, autopct='%1.1f%%', 
                                              colors=colors, startangle=90)
-            ax2.set_title('Phân bố trạng thái Checkin', fontweight='bold', pad=20)
+            ax2.set_title('Phân bố trạng thái Checkin', fontsize=11, fontweight='bold', pad=15)
+            
+            # Adjust text size
+            for text in texts:
+                text.set_fontsize(9)
+            for autotext in autotexts:
+                autotext.set_fontsize(8)
+                autotext.set_color('white')
+                autotext.set_weight('bold')
         
-        # Chart 3: OKR Shifts Bar Chart
-        ax3 = plt.subplot(3, 1, 2)
-        if okr_shifts:
-            top_shifts = okr_shifts[:15]  # Top 15
-            names = [u['user_name'][:15] + '...' if len(u['user_name']) > 15 else u['user_name'] 
-                    for u in top_shifts]
-            values = [u['okr_shift'] for u in top_shifts]
-            
-            colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
-            
-            bars = ax3.bar(range(len(names)), values, color=colors)
-            ax3.set_xticks(range(len(names)))
-            ax3.set_xticklabels(names, rotation=45, ha='right')
-            ax3.set_title('Dịch chuyển OKR (Top 15)', fontweight='bold', pad=20)
-            ax3.set_ylabel('Dịch chuyển OKR')
-            ax3.grid(True, alpha=0.3)
-            
-            # Add value labels on bars
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height + (0.01 if height >= 0 else -0.05),
-                        f'{value:.2f}', ha='center', va='bottom' if height >= 0 else 'top', fontsize=8)
-        
-        # Chart 4: Progress Distribution
-        ax4 = plt.subplot(3, 2, 5)
+        # Chart 3: Progress Distribution - Bottom left
+        ax3 = plt.subplot(2, 2, 3)
         if okr_shifts:
             progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
             stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
@@ -244,16 +245,49 @@ class PDFReportGenerator:
             non_zero_data = [(size, label, color) for size, label, color in zip(sizes, labels, colors) if size > 0]
             if non_zero_data:
                 sizes, labels, colors = zip(*non_zero_data)
-                wedges, texts, autotexts = ax4.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                wedges, texts, autotexts = ax3.pie(sizes, labels=labels, autopct='%1.1f%%', 
                                                  colors=colors, startangle=90)
-                ax4.set_title('Phân bố tiến độ nhân viên', fontweight='bold', pad=20)
+                ax3.set_title('Phân bố tiến độ nhân viên', fontsize=11, fontweight='bold', pad=15)
+                
+                # Adjust text size
+                for text in texts:
+                    text.set_fontsize(9)
+                for autotext in autotexts:
+                    autotext.set_fontsize(8)
+                    autotext.set_color('white')
+                    autotext.set_weight('bold')
         
-        plt.tight_layout()
+        # Chart 4: OKR Shifts Bar Chart - Bottom spanning full width
+        ax4 = plt.subplot(2, 1, 2)
+        if okr_shifts:
+            top_shifts = okr_shifts[:12]  # Reduced to 12 for better readability
+            names = [u['user_name'][:12] + '...' if len(u['user_name']) > 12 else u['user_name'] 
+                    for u in top_shifts]
+            values = [u['okr_shift'] for u in top_shifts]
+            
+            colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
+            
+            bars = ax4.bar(range(len(names)), values, color=colors)
+            ax4.set_xticks(range(len(names)))
+            ax4.set_xticklabels(names, rotation=45, ha='right', fontsize=8)
+            ax4.set_title('Dịch chuyển OKR (Top 12)', fontsize=11, fontweight='bold', pad=15)
+            ax4.set_ylabel('Dịch chuyển OKR', fontsize=9)
+            ax4.grid(True, alpha=0.3)
+            
+            # Add value labels on bars with better positioning
+            for bar, value in zip(bars, values):
+                height = bar.get_height()
+                ax4.text(bar.get_x() + bar.get_width()/2., 
+                        height + (0.02 if height >= 0 else -0.08),
+                        f'{value:.2f}', ha='center', 
+                        va='bottom' if height >= 0 else 'top', fontsize=7)
+        
+        plt.tight_layout(rect=[0, 0.02, 1, 0.92])  # Leave space for main title
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
     
     def _create_tables_page(self, pdf, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with detailed tables"""
+        """Create page with detailed tables - Fixed layout"""
         
         fig, ax = plt.subplots(figsize=(8.27, 11.69))
         ax.set_xlim(0, 10)
@@ -263,77 +297,78 @@ class PDFReportGenerator:
         y_pos = 13.5
         
         # Page title
-        ax.text(5, y_pos, 'CHI TIẾT PHÂN TÍCH', fontsize=16, fontweight='bold', 
+        ax.text(5, y_pos, 'CHI TIẾT PHÂN TÍCH', fontsize=15, fontweight='bold', 
                ha='center', color='#2c3e50')
         y_pos -= 0.8
         
         # Members without goals
-        if members_without_goals:
+        if members_without_goals and y_pos > 6:  # Check if we have space
             ax.text(0.5, y_pos, f'NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)', 
-                   fontsize=12, fontweight='bold', color='#e74c3c')
-            y_pos -= 0.4
+                   fontsize=11, fontweight='bold', color='#e74c3c')
+            y_pos -= 0.5
             
             # Table header
-            ax.text(0.5, y_pos, 'STT', fontsize=10, fontweight='bold')
-            ax.text(1.5, y_pos, 'Tên', fontsize=10, fontweight='bold')
-            ax.text(4, y_pos, 'Username', fontsize=10, fontweight='bold')
-            ax.text(6.5, y_pos, 'Chức vụ', fontsize=10, fontweight='bold')
+            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
+            ax.text(1.5, y_pos, 'Tên', fontsize=9, fontweight='bold')
+            ax.text(4, y_pos, 'Username', fontsize=9, fontweight='bold')
+            ax.text(6.5, y_pos, 'Chức vụ', fontsize=9, fontweight='bold')
             
             # Draw header line
             ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-            y_pos -= 0.3
+            y_pos -= 0.4
             
-            # Table rows (limit to first 15)
-            for i, member in enumerate(members_without_goals[:15], 1):
-                if y_pos < 1:
+            # Table rows (limit to first 12 for spacing)
+            for i, member in enumerate(members_without_goals[:12], 1):
+                if y_pos < 6:  # Stop if we're too low
                     break
-                ax.text(0.5, y_pos, str(i), fontsize=9)
-                ax.text(1.5, y_pos, member.get('name', '')[:20], fontsize=9)
-                ax.text(4, y_pos, member.get('username', ''), fontsize=9)
-                ax.text(6.5, y_pos, member.get('job', '')[:25], fontsize=9)
-                y_pos -= 0.25
+                ax.text(0.5, y_pos, str(i), fontsize=8)
+                ax.text(1.5, y_pos, member.get('name', '')[:18], fontsize=8)  # Truncate long names
+                ax.text(4, y_pos, member.get('username', ''), fontsize=8)
+                ax.text(6.5, y_pos, member.get('job', '')[:20], fontsize=8)  # Truncate long job titles
+                y_pos -= 0.3
             
-            if len(members_without_goals) > 15:
-                ax.text(0.5, y_pos, f'... và {len(members_without_goals) - 15} nhân viên khác', 
-                       fontsize=9, style='italic', color='#7f8c8d')
+            if len(members_without_goals) > 12:
+                ax.text(0.5, y_pos, f'... và {len(members_without_goals) - 12} nhân viên khác', 
+                       fontsize=8, style='italic', color='#7f8c8d')
+                y_pos -= 0.4
             
-            y_pos -= 0.5
+            y_pos -= 0.6
         
-        # Top performers
+        # Top performers section
         if okr_shifts and y_pos > 3:
-            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10]
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:8]  # Reduced to 8
             if top_performers:
                 ax.text(0.5, y_pos, f'TOP NHÂN VIÊN TIẾN BỘ ({len(top_performers)} người)', 
-                       fontsize=12, fontweight='bold', color='#27AE60')
-                y_pos -= 0.4
+                       fontsize=11, fontweight='bold', color='#27AE60')
+                y_pos -= 0.5
                 
                 # Table header
-                ax.text(0.5, y_pos, 'STT', fontsize=10, fontweight='bold')
-                ax.text(1.5, y_pos, 'Nhân viên', fontsize=10, fontweight='bold')
-                ax.text(4.5, y_pos, 'Dịch chuyển', fontsize=10, fontweight='bold')
-                ax.text(6.5, y_pos, 'Hiện tại', fontsize=10, fontweight='bold')
-                ax.text(8, y_pos, 'Trước đó', fontsize=10, fontweight='bold')
+                ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
+                ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
+                ax.text(4.5, y_pos, 'Dịch chuyển', fontsize=9, fontweight='bold')
+                ax.text(6.5, y_pos, 'Hiện tại', fontsize=9, fontweight='bold')
+                ax.text(8, y_pos, 'Trước đó', fontsize=9, fontweight='bold')
                 
                 # Draw header line
                 ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-                y_pos -= 0.3
+                y_pos -= 0.4
                 
                 # Table rows
                 for i, user in enumerate(top_performers, 1):
                     if y_pos < 1:
                         break
-                    ax.text(0.5, y_pos, str(i), fontsize=9)
-                    ax.text(1.5, y_pos, user['user_name'][:20], fontsize=9)
-                    ax.text(4.5, y_pos, f"{user['okr_shift']:.2f}", fontsize=9, color='#27AE60')
-                    ax.text(6.5, y_pos, f"{user['current_value']:.2f}", fontsize=9)
-                    ax.text(8, y_pos, f"{user['last_friday_value']:.2f}", fontsize=9)
-                    y_pos -= 0.25
+                    ax.text(0.5, y_pos, str(i), fontsize=8)
+                    ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)  # Truncate long names
+                    ax.text(4.5, y_pos, f"{user['okr_shift']:.2f}", fontsize=8, color='#27AE60')
+                    ax.text(6.5, y_pos, f"{user['current_value']:.2f}", fontsize=8)
+                    ax.text(8, y_pos, f"{user['last_friday_value']:.2f}", fontsize=8)
+                    y_pos -= 0.3
         
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
     
     def _create_checkin_page(self, pdf, analyzer):
-        """Create page with checkin analysis"""
+        """Create page with checkin analysis - Fixed layout"""
         
         # Get checkin behavior data
         period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
@@ -346,38 +381,38 @@ class PDFReportGenerator:
         y_pos = 13.5
         
         # Page title
-        ax.text(5, y_pos, 'PHÂN TÍCH HOẠT ĐỘNG CHECKIN', fontsize=16, fontweight='bold', 
+        ax.text(5, y_pos, 'PHÂN TÍCH HOẠT ĐỘNG CHECKIN', fontsize=15, fontweight='bold', 
                ha='center', color='#2c3e50')
-        y_pos -= 0.8
+        y_pos -= 1
         
         if overall_checkins:
-            ax.text(0.5, y_pos, f'TOP NHÂN VIÊN HOẠT ĐỘNG NHẤT ({len(overall_checkins[:20])} người)', 
-                   fontsize=12, fontweight='bold', color='#3498db')
-            y_pos -= 0.4
+            ax.text(0.5, y_pos, f'TOP NHÂN VIÊN HOẠT ĐỘNG NHẤT ({min(len(overall_checkins), 15)} người)', 
+                   fontsize=11, fontweight='bold', color='#3498db')
+            y_pos -= 0.5
             
             # Table header
-            ax.text(0.5, y_pos, 'STT', fontsize=10, fontweight='bold')
-            ax.text(1.5, y_pos, 'Nhân viên', fontsize=10, fontweight='bold')
-            ax.text(4.5, y_pos, 'Tổng checkin', fontsize=10, fontweight='bold')
-            ax.text(6.5, y_pos, 'Tần suất/tuần', fontsize=10, fontweight='bold')
-            ax.text(8.5, y_pos, 'Tuần trước', fontsize=10, fontweight='bold')
+            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
+            ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
+            ax.text(4.5, y_pos, 'Tổng checkin', fontsize=9, fontweight='bold')
+            ax.text(6.5, y_pos, 'Tần suất/tuần', fontsize=9, fontweight='bold')
+            ax.text(8.5, y_pos, 'Tuần trước', fontsize=9, fontweight='bold')
             
             # Draw header line
             ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-            y_pos -= 0.3
+            y_pos -= 0.4
             
-            # Table rows (top 20)
-            for i, user in enumerate(overall_checkins[:20], 1):
+            # Table rows (top 15 with better spacing)
+            for i, user in enumerate(overall_checkins[:15], 1):
                 if y_pos < 1:
                     break
-                ax.text(0.5, y_pos, str(i), fontsize=9)
-                ax.text(1.5, y_pos, user['user_name'][:20], fontsize=9)
-                ax.text(4.5, y_pos, str(user.get('total_checkins', 0)), fontsize=9)
-                ax.text(6.5, y_pos, f"{user.get('checkin_frequency_per_week', 0):.2f}", fontsize=9)
-                ax.text(8.5, y_pos, str(user.get('last_week_checkins', 0)), fontsize=9)
-                y_pos -= 0.25
+                ax.text(0.5, y_pos, str(i), fontsize=8)
+                ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)  # Truncate long names
+                ax.text(4.5, y_pos, str(user.get('total_checkins', 0)), fontsize=8)
+                ax.text(6.5, y_pos, f"{user.get('checkin_frequency_per_week', 0):.2f}", fontsize=8)
+                ax.text(8.5, y_pos, str(user.get('last_week_checkins', 0)), fontsize=8)
+                y_pos -= 0.3
         else:
-            ax.text(5, y_pos, 'Không có dữ liệu checkin', fontsize=12, ha='center', color='#7f8c8d')
+            ax.text(5, y_pos, 'Không có dữ liệu checkin', fontsize=11, ha='center', color='#7f8c8d')
         
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
@@ -408,8 +443,8 @@ class PDFReportGenerator:
                     autotext.set_weight('bold')
                 
             elif chart_type == 'bar' and data:
-                names = list(data.keys())[:15]  # Top 15
-                values = list(data.values())[:15]
+                names = list(data.keys())[:12]  # Reduced to 12
+                values = list(data.values())[:12]
                 
                 bars = ax.bar(names, values, color=['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values])
                 ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
@@ -417,7 +452,7 @@ class PDFReportGenerator:
                 ax.set_ylabel('Dịch chuyển OKR')
                 
                 # Rotate x-axis labels
-                plt.xticks(rotation=45, ha='right')
+                plt.xticks(rotation=45, ha='right', fontsize=8)
                 
                 # Add value labels on bars
                 for bar, value in zip(bars, values):
