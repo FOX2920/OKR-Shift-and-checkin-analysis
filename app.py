@@ -50,7 +50,7 @@ class PDFReportGenerator:
         self.setup_custom_styles()
     
     def setup_custom_styles(self):
-        """Setup custom styles for PDF"""
+        """Setup custom styles for PDF with Vietnamese font support"""
         # Title style
         self.styles.add(ParagraphStyle(
             name='CustomTitle',
@@ -59,7 +59,7 @@ class PDFReportGenerator:
             spaceAfter=30,
             alignment=TA_CENTER,
             textColor=colors.HexColor('#2c3e50'),
-            fontName='Helvetica-Bold'
+            fontName='Times-Bold'  # Changed from Helvetica-Bold
         ))
         
         # Section header style
@@ -70,7 +70,7 @@ class PDFReportGenerator:
             spaceAfter=12,
             spaceBefore=20,
             textColor=colors.HexColor('#3498db'),
-            fontName='Helvetica-Bold'
+            fontName='Times-Bold'  # Changed from Helvetica-Bold
         ))
         
         # Normal text style
@@ -79,8 +79,199 @@ class PDFReportGenerator:
             parent=self.styles['Normal'],
             fontSize=10,
             spaceAfter=6,
-            alignment=TA_JUSTIFY
+            alignment=TA_JUSTIFY,
+            fontName='Times-Roman'  # Added font specification
         ))
+    
+    
+    def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
+                         members_with_goals_no_checkins, okr_shifts):
+        """Create comprehensive PDF report with Vietnamese font support"""
+        
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        story = []
+        
+        # Title
+        current_date = datetime.now().strftime("%d/%m/%Y")
+        title = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
+        story.append(Paragraph(title, self.styles['CustomTitle']))
+        story.append(Spacer(1, 20))
+        
+        # Summary statistics
+        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+        members_with_goals = total_members - len(members_without_goals)
+        members_with_checkins = total_members - len(members_without_checkins)
+        
+        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+        
+        # Summary table
+        story.append(Paragraph("TỔNG QUAN", self.styles['SectionHeader']))
+        summary_data = [
+            ['Chỉ số', 'Giá trị', 'Tỷ lệ'],
+            ['Tổng nhân viên', str(total_members), '100%'],
+            ['Có OKR', str(members_with_goals), f"{(members_with_goals/total_members*100):.1f}%" if total_members > 0 else "0%"],
+            ['Có Checkin', str(members_with_checkins), f"{(members_with_checkins/total_members*100):.1f}%" if total_members > 0 else "0%"],
+            ['Nhân viên tiến bộ', str(progress_users), f"{(progress_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
+            ['Nhân viên ổn định', str(stable_users), f"{(stable_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
+            ['Nhân viên cần hỗ trợ', str(issue_users), f"{(issue_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"]
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 20))
+        
+        # Goal distribution chart
+        goal_chart_data = {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)}
+        goal_chart_buffer = self.create_summary_chart(goal_chart_data, 'Phân bố trạng thái OKR', 'pie')
+        if goal_chart_buffer:
+            story.append(Paragraph("PHÂN BỐ TRẠNG THÁI OKR", self.styles['SectionHeader']))
+            story.append(Image(goal_chart_buffer, width=6*inch, height=3*inch))
+            story.append(Spacer(1, 15))
+        
+        # Members without goals
+        if members_without_goals:
+            story.append(Paragraph(f"NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)", self.styles['SectionHeader']))
+            
+            # Limit to first 20 for space
+            display_members = members_without_goals[:20]
+            members_data = [['STT', 'Tên', 'Username', 'Chức vụ']]
+            for i, member in enumerate(display_members, 1):
+                members_data.append([
+                    str(i),
+                    member.get('name', ''),
+                    member.get('username', ''),
+                    member.get('job', '')[:25] + '...' if len(member.get('job', '')) > 25 else member.get('job', '')
+                ])
+            
+            members_table = Table(members_data, colWidths=[0.5*inch, 2*inch, 1.5*inch, 2.5*inch])
+            members_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP')
+            ]))
+            story.append(members_table)
+            
+            if len(members_without_goals) > 20:
+                story.append(Spacer(1, 10))
+                story.append(Paragraph(f"... và {len(members_without_goals) - 20} nhân viên khác", self.styles['CustomNormal']))
+            story.append(Spacer(1, 15))
+        
+        story.append(PageBreak())
+        
+        # OKR Shifts analysis
+        if okr_shifts:
+            story.append(Paragraph("PHÂN TÍCH DỊCH CHUYỂN OKR", self.styles['SectionHeader']))
+            
+            # OKR shifts chart
+            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]}
+            okr_chart_buffer = self.create_summary_chart(okr_shifts_data, 'Dịch chuyển OKR (Top 15)', 'bar')
+            if okr_chart_buffer:
+                story.append(Image(okr_chart_buffer, width=7*inch, height=4*inch))
+                story.append(Spacer(1, 15))
+            
+            # Top performers table
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10]
+            if top_performers:
+                story.append(Paragraph("TOP 10 NHÂN VIÊN TIẾN BỘ NHẤT", self.styles['SectionHeader']))
+                
+                perf_data = [['STT', 'Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', 'Giá trị trước']]
+                for i, user in enumerate(top_performers, 1):
+                    perf_data.append([
+                        str(i),
+                        user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
+                        f"{user['okr_shift']:.2f}",
+                        f"{user['current_value']:.2f}",
+                        f"{user['last_friday_value']:.2f}"
+                    ])
+                
+                perf_table = Table(perf_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
+                perf_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+                    ('FONTSIZE', (0, 0), (-1, 0), 9),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+                    ('FONTSIZE', (0, 1), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                story.append(perf_table)
+                story.append(Spacer(1, 20))
+        
+        # Get checkin behavior data for additional analysis
+        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+        
+        if overall_checkins:
+            story.append(Paragraph("TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN", self.styles['SectionHeader']))
+            
+            # Top 15 most active checkin users
+            top_checkin_users = overall_checkins[:15]
+            checkin_data = [['STT', 'Nhân viên', 'Tổng checkin', 'Tần suất/tuần', 'Checkin tuần trước']]
+            
+            for i, user in enumerate(top_checkin_users, 1):
+                checkin_data.append([
+                    str(i),
+                    user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
+                    str(user.get('total_checkins', 0)),
+                    f"{user.get('checkin_frequency_per_week', 0):.2f}",
+                    str(user.get('last_week_checkins', 0))
+                ])
+            
+            checkin_table = Table(checkin_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
+            checkin_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(checkin_table)
+        
+        # Footer
+        story.append(Spacer(1, 30))
+        footer_text = f"""
+        <para align="center">
+        <b>A Plus Mineral Material Corporation</b><br/>
+        Báo cáo được tạo tự động bởi hệ thống OKR Analysis<br/>
+        Ngày tạo: {current_date}
+        </para>
+        """
+        story.append(Paragraph(footer_text, self.styles['CustomNormal']))
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
     
     def create_summary_chart(self, data, title, chart_type='bar'):
         """Create matplotlib chart for PDF"""
@@ -128,194 +319,6 @@ class PDFReportGenerator:
             print(f"Error creating chart: {e}")
             return None
     
-    def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                         members_with_goals_no_checkins, okr_shifts):
-        """Create comprehensive PDF report"""
-        
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
-        story = []
-        
-        # Title
-        current_date = datetime.now().strftime("%d/%m/%Y")
-        title = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
-        story.append(Paragraph(title, self.styles['CustomTitle']))
-        story.append(Spacer(1, 20))
-        
-        # Summary statistics
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-        members_with_goals = total_members - len(members_without_goals)
-        members_with_checkins = total_members - len(members_without_checkins)
-        
-        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
-        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
-        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
-        
-        # Summary table
-        story.append(Paragraph("TỔNG QUAN", self.styles['SectionHeader']))
-        summary_data = [
-            ['Chỉ số', 'Giá trị', 'Tỷ lệ'],
-            ['Tổng nhân viên', str(total_members), '100%'],
-            ['Có OKR', str(members_with_goals), f"{(members_with_goals/total_members*100):.1f}%" if total_members > 0 else "0%"],
-            ['Có Checkin', str(members_with_checkins), f"{(members_with_checkins/total_members*100):.1f}%" if total_members > 0 else "0%"],
-            ['Nhân viên tiến bộ', str(progress_users), f"{(progress_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
-            ['Nhân viên ổn định', str(stable_users), f"{(stable_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
-            ['Nhân viên cần hỗ trợ', str(issue_users), f"{(issue_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"]
-        ]
-        
-        summary_table = Table(summary_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
-        summary_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        story.append(summary_table)
-        story.append(Spacer(1, 20))
-        
-        # Goal distribution chart
-        goal_chart_data = {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)}
-        goal_chart_buffer = self.create_summary_chart(goal_chart_data, 'Phân bố trạng thái OKR', 'pie')
-        if goal_chart_buffer:
-            story.append(Paragraph("PHÂN BỐ TRẠNG THÁI OKR", self.styles['SectionHeader']))
-            story.append(Image(goal_chart_buffer, width=6*inch, height=3*inch))
-            story.append(Spacer(1, 15))
-        
-        # Members without goals
-        if members_without_goals:
-            story.append(Paragraph(f"NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)", self.styles['SectionHeader']))
-            
-            # Limit to first 20 for space
-            display_members = members_without_goals[:20]
-            members_data = [['STT', 'Tên', 'Username', 'Chức vụ']]
-            for i, member in enumerate(display_members, 1):
-                members_data.append([
-                    str(i),
-                    member.get('name', ''),
-                    member.get('username', ''),
-                    member.get('job', '')[:25] + '...' if len(member.get('job', '')) > 25 else member.get('job', '')
-                ])
-            
-            members_table = Table(members_data, colWidths=[0.5*inch, 2*inch, 1.5*inch, 2.5*inch])
-            members_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP')
-            ]))
-            story.append(members_table)
-            
-            if len(members_without_goals) > 20:
-                story.append(Spacer(1, 10))
-                story.append(Paragraph(f"... và {len(members_without_goals) - 20} nhân viên khác", self.styles['CustomNormal']))
-            story.append(Spacer(1, 15))
-        
-        story.append(PageBreak())
-        
-        # OKR Shifts analysis
-        if okr_shifts:
-            story.append(Paragraph("PHÂN TÍCH DỊCH CHUYỂN OKR", self.styles['SectionHeader']))
-            
-            # OKR shifts chart
-            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]}
-            okr_chart_buffer = self.create_summary_chart(okr_shifts_data, 'Dịch chuyển OKR (Top 15)', 'bar')
-            if okr_chart_buffer:
-                story.append(Image(okr_chart_buffer, width=7*inch, height=4*inch))
-                story.append(Spacer(1, 15))
-            
-            # Top performers table
-            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10]
-            if top_performers:
-                story.append(Paragraph("TOP 10 NHÂN VIÊN TIẾN BỘ NHẤT", self.styles['SectionHeader']))
-                
-                perf_data = [['STT', 'Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', 'Giá trị trước']]
-                for i, user in enumerate(top_performers, 1):
-                    perf_data.append([
-                        str(i),
-                        user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
-                        f"{user['okr_shift']:.2f}",
-                        f"{user['current_value']:.2f}",
-                        f"{user['last_friday_value']:.2f}"
-                    ])
-                
-                perf_table = Table(perf_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
-                perf_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
-                ]))
-                story.append(perf_table)
-                story.append(Spacer(1, 20))
-        
-        # Get checkin behavior data for additional analysis
-        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
-        
-        if overall_checkins:
-            story.append(Paragraph("TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN", self.styles['SectionHeader']))
-            
-            # Top 15 most active checkin users
-            top_checkin_users = overall_checkins[:15]
-            checkin_data = [['STT', 'Nhân viên', 'Tổng checkin', 'Tần suất/tuần', 'Checkin tuần trước']]
-            
-            for i, user in enumerate(top_checkin_users, 1):
-                checkin_data.append([
-                    str(i),
-                    user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
-                    str(user.get('total_checkins', 0)),
-                    f"{user.get('checkin_frequency_per_week', 0):.2f}",
-                    str(user.get('last_week_checkins', 0))
-                ])
-            
-            checkin_table = Table(checkin_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
-            checkin_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
-            story.append(checkin_table)
-        
-        # Footer
-        story.append(Spacer(1, 30))
-        footer_text = f"""
-        <para align="center">
-        <b>A Plus Mineral Material Corporation</b><br/>
-        Báo cáo được tạo tự động bởi hệ thống OKR Analysis<br/>
-        Ngày tạo: {current_date}
-        </para>
-        """
-        story.append(Paragraph(footer_text, self.styles['CustomNormal']))
-        
-        # Build PDF
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
 
 class OKRAnalysisSystem:
     """OKR Analysis System for Streamlit"""
