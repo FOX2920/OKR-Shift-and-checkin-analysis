@@ -1764,9 +1764,8 @@ def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_
         update_progress("Sending email with PDF attachment...", 0.9)
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
-        # Use enhanced email generator with PDF capability
-        enhanced_email_generator = EmailReportGeneratorUpdated()
-        success, message = enhanced_email_generator.send_email_with_pdf_report(
+        # Use the existing email generator with PDF capability (FIXED LINE)
+        success, message = email_generator.send_email_with_pdf_report(
             email_from, email_password, email_to, subject, html_content, pdf_buffer
         )
         
