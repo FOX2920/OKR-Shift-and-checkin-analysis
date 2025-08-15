@@ -43,11 +43,32 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 
 class PDFReportGenerator:
-    """Generate PDF reports for OKR analysis"""
+    """Generate PDF reports for OKR analysis with Vietnamese font support"""
     
     def __init__(self):
         self.styles = getSampleStyleSheet()
+        self.register_vietnamese_fonts()
         self.setup_custom_styles()
+    
+    def register_vietnamese_fonts(self):
+        """Register Vietnamese-compatible fonts"""
+        try:
+            # Sử dụng DejaVu Sans - font mặc định có hỗ trợ Unicode tốt
+            # Hoặc bạn có thể tải font .ttf và đặt trong thư mục fonts/
+            
+            # Cách 1: Sử dụng font hệ thống (recommend cho GitHub deployment)
+            pdfmetrics.registerFont(TTFont('Vietnamese', 'DejaVuSans.ttf'))
+            pdfmetrics.registerFont(TTFont('Vietnamese-Bold', 'DejaVuSans-Bold.ttf'))
+            
+            # Nếu không có DejaVu Sans, fallback về Helvetica với encoding
+            self.font_name = 'Vietnamese'
+            self.font_bold = 'Vietnamese-Bold'
+            
+        except:
+            # Fallback: Sử dụng Helvetica với UTF-8 encoding
+            self.font_name = 'Helvetica'
+            self.font_bold = 'Helvetica-Bold'
+            print("Warning: Using fallback fonts. Vietnamese characters may not display correctly.")
     
     def setup_custom_styles(self):
         """Setup custom styles for PDF with Vietnamese font support"""
@@ -59,7 +80,8 @@ class PDFReportGenerator:
             spaceAfter=30,
             alignment=TA_CENTER,
             textColor=colors.HexColor('#2c3e50'),
-            fontName='Times-Bold'  # Changed from Helvetica-Bold
+            fontName=self.font_bold,
+            encoding='utf-8'
         ))
         
         # Section header style
@@ -70,7 +92,8 @@ class PDFReportGenerator:
             spaceAfter=12,
             spaceBefore=20,
             textColor=colors.HexColor('#3498db'),
-            fontName='Times-Bold'  # Changed from Helvetica-Bold
+            fontName=self.font_bold,
+            encoding='utf-8'
         ))
         
         # Normal text style
@@ -80,9 +103,9 @@ class PDFReportGenerator:
             fontSize=10,
             spaceAfter=6,
             alignment=TA_JUSTIFY,
-            fontName='Times-Roman'  # Added font specification
+            fontName=self.font_name,
+            encoding='utf-8'
         ))
-    
     
     def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
                          members_with_goals_no_checkins, okr_shifts):
@@ -92,10 +115,10 @@ class PDFReportGenerator:
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
         story = []
         
-        # Title
+        # Title với encoding UTF-8
         current_date = datetime.now().strftime("%d/%m/%Y")
         title = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
-        story.append(Paragraph(title, self.styles['CustomTitle']))
+        story.append(Paragraph(title.encode('utf-8').decode('utf-8'), self.styles['CustomTitle']))
         story.append(Spacer(1, 20))
         
         # Summary statistics
@@ -124,9 +147,9 @@ class PDFReportGenerator:
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+            ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
             ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+            ('FONTNAME', (0, 1), (-1, -1), self.font_name),
             ('FONTSIZE', (0, 1), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
             ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
@@ -163,9 +186,9 @@ class PDFReportGenerator:
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+                ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
                 ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+                ('FONTNAME', (0, 1), (-1, -1), self.font_name),
                 ('FONTSIZE', (0, 1), (-1, -1), 8),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
@@ -212,9 +235,9 @@ class PDFReportGenerator:
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+                    ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
                     ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+                    ('FONTNAME', (0, 1), (-1, -1), self.font_name),
                     ('FONTSIZE', (0, 1), (-1, -1), 8),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
                     ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
@@ -247,9 +270,9 @@ class PDFReportGenerator:
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),  # Changed from Helvetica-Bold
+                ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
                 ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('FONTNAME', (0, 1), (-1, -1), 'Times-Roman'),  # Changed from Helvetica
+                ('FONTNAME', (0, 1), (-1, -1), self.font_name),
                 ('FONTSIZE', (0, 1), (-1, -1), 8),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
@@ -274,8 +297,11 @@ class PDFReportGenerator:
         return buffer
     
     def create_summary_chart(self, data, title, chart_type='bar'):
-        """Create matplotlib chart for PDF"""
+        """Create matplotlib chart for PDF with Vietnamese font support"""
         try:
+            # Thiết lập font cho matplotlib để hỗ trợ tiếng Việt
+            plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei']
+            
             fig, ax = plt.subplots(figsize=(8, 4))
             
             if chart_type == 'pie' and data:
@@ -286,6 +312,14 @@ class PDFReportGenerator:
                 wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', 
                                                  colors=colors_pie[:len(labels)], startangle=90)
                 ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+                
+                # Đảm bảo text hiển thị đúng
+                for text in texts:
+                    text.set_fontsize(10)
+                for autotext in autotexts:
+                    autotext.set_color('white')
+                    autotext.set_fontsize(9)
+                    autotext.set_weight('bold')
                 
             elif chart_type == 'bar' and data:
                 names = list(data.keys())[:15]  # Top 15
