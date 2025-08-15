@@ -19,8 +19,6 @@ from email import encoders
 import base64
 from io import BytesIO
 import plotly.io as pio
-import tempfile
-from weasyprint import HTML, CSS
 
 warnings.filterwarnings('ignore')
 
@@ -31,6 +29,293 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+# Thêm import này vào đầu file (sau dòng import plotly.io as pio)
+import io
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.pdfgen import canvas
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+
+class PDFReportGenerator:
+    """Generate PDF reports for OKR analysis"""
+    
+    def __init__(self):
+        self.styles = getSampleStyleSheet()
+        self.setup_custom_styles()
+    
+    def setup_custom_styles(self):
+        """Setup custom styles for PDF"""
+        # Title style
+        self.styles.add(ParagraphStyle(
+            name='CustomTitle',
+            parent=self.styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor('#2c3e50'),
+            fontName='Helvetica-Bold'
+        ))
+        
+        # Section header style
+        self.styles.add(ParagraphStyle(
+            name='SectionHeader',
+            parent=self.styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            spaceBefore=20,
+            textColor=colors.HexColor('#3498db'),
+            fontName='Helvetica-Bold'
+        ))
+        
+        # Normal text style
+        self.styles.add(ParagraphStyle(
+            name='CustomNormal',
+            parent=self.styles['Normal'],
+            fontSize=10,
+            spaceAfter=6,
+            alignment=TA_JUSTIFY
+        ))
+    
+    def create_summary_chart(self, data, title, chart_type='bar'):
+        """Create matplotlib chart for PDF"""
+        try:
+            fig, ax = plt.subplots(figsize=(8, 4))
+            
+            if chart_type == 'pie' and data:
+                labels = list(data.keys())
+                sizes = list(data.values())
+                colors_pie = ['#27AE60', '#E74C3C', '#3498DB', '#F39C12', '#9B59B6']
+                
+                wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                                 colors=colors_pie[:len(labels)], startangle=90)
+                ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+                
+            elif chart_type == 'bar' and data:
+                names = list(data.keys())[:15]  # Top 15
+                values = list(data.values())[:15]
+                
+                bars = ax.bar(names, values, color=['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values])
+                ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+                ax.set_xlabel('Nhân viên')
+                ax.set_ylabel('Dịch chuyển OKR')
+                
+                # Rotate x-axis labels
+                plt.xticks(rotation=45, ha='right')
+                
+                # Add value labels on bars
+                for bar, value in zip(bars, values):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height + (0.01 if height >= 0 else -0.05),
+                           f'{value:.2f}', ha='center', va='bottom' if height >= 0 else 'top', fontsize=8)
+            
+            plt.tight_layout()
+            
+            # Save to bytes
+            img_buffer = io.BytesIO()
+            plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
+            img_buffer.seek(0)
+            plt.close()
+            
+            return img_buffer
+            
+        except Exception as e:
+            print(f"Error creating chart: {e}")
+            return None
+    
+    def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
+                         members_with_goals_no_checkins, okr_shifts):
+        """Create comprehensive PDF report"""
+        
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        story = []
+        
+        # Title
+        current_date = datetime.now().strftime("%d/%m/%Y")
+        title = f"BÁO CÁO TIẾN ĐỘ OKR & CHECKIN<br/>{selected_cycle['name']}<br/>Ngày báo cáo: {current_date}"
+        story.append(Paragraph(title, self.styles['CustomTitle']))
+        story.append(Spacer(1, 20))
+        
+        # Summary statistics
+        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+        members_with_goals = total_members - len(members_without_goals)
+        members_with_checkins = total_members - len(members_without_checkins)
+        
+        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+        
+        # Summary table
+        story.append(Paragraph("TỔNG QUAN", self.styles['SectionHeader']))
+        summary_data = [
+            ['Chỉ số', 'Giá trị', 'Tỷ lệ'],
+            ['Tổng nhân viên', str(total_members), '100%'],
+            ['Có OKR', str(members_with_goals), f"{(members_with_goals/total_members*100):.1f}%" if total_members > 0 else "0%"],
+            ['Có Checkin', str(members_with_checkins), f"{(members_with_checkins/total_members*100):.1f}%" if total_members > 0 else "0%"],
+            ['Nhân viên tiến bộ', str(progress_users), f"{(progress_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
+            ['Nhân viên ổn định', str(stable_users), f"{(stable_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"],
+            ['Nhân viên cần hỗ trợ', str(issue_users), f"{(issue_users/len(okr_shifts)*100):.1f}%" if okr_shifts else "0%"]
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 20))
+        
+        # Goal distribution chart
+        goal_chart_data = {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)}
+        goal_chart_buffer = self.create_summary_chart(goal_chart_data, 'Phân bố trạng thái OKR', 'pie')
+        if goal_chart_buffer:
+            story.append(Paragraph("PHÂN BỐ TRẠNG THÁI OKR", self.styles['SectionHeader']))
+            story.append(Image(goal_chart_buffer, width=6*inch, height=3*inch))
+            story.append(Spacer(1, 15))
+        
+        # Members without goals
+        if members_without_goals:
+            story.append(Paragraph(f"NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)", self.styles['SectionHeader']))
+            
+            # Limit to first 20 for space
+            display_members = members_without_goals[:20]
+            members_data = [['STT', 'Tên', 'Username', 'Chức vụ']]
+            for i, member in enumerate(display_members, 1):
+                members_data.append([
+                    str(i),
+                    member.get('name', ''),
+                    member.get('username', ''),
+                    member.get('job', '')[:25] + '...' if len(member.get('job', '')) > 25 else member.get('job', '')
+                ])
+            
+            members_table = Table(members_data, colWidths=[0.5*inch, 2*inch, 1.5*inch, 2.5*inch])
+            members_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP')
+            ]))
+            story.append(members_table)
+            
+            if len(members_without_goals) > 20:
+                story.append(Spacer(1, 10))
+                story.append(Paragraph(f"... và {len(members_without_goals) - 20} nhân viên khác", self.styles['CustomNormal']))
+            story.append(Spacer(1, 15))
+        
+        story.append(PageBreak())
+        
+        # OKR Shifts analysis
+        if okr_shifts:
+            story.append(Paragraph("PHÂN TÍCH DỊCH CHUYỂN OKR", self.styles['SectionHeader']))
+            
+            # OKR shifts chart
+            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]}
+            okr_chart_buffer = self.create_summary_chart(okr_shifts_data, 'Dịch chuyển OKR (Top 15)', 'bar')
+            if okr_chart_buffer:
+                story.append(Image(okr_chart_buffer, width=7*inch, height=4*inch))
+                story.append(Spacer(1, 15))
+            
+            # Top performers table
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10]
+            if top_performers:
+                story.append(Paragraph("TOP 10 NHÂN VIÊN TIẾN BỘ NHẤT", self.styles['SectionHeader']))
+                
+                perf_data = [['STT', 'Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', 'Giá trị trước']]
+                for i, user in enumerate(top_performers, 1):
+                    perf_data.append([
+                        str(i),
+                        user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
+                        f"{user['okr_shift']:.2f}",
+                        f"{user['current_value']:.2f}",
+                        f"{user['last_friday_value']:.2f}"
+                    ])
+                
+                perf_table = Table(perf_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
+                perf_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 9),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                story.append(perf_table)
+                story.append(Spacer(1, 20))
+        
+        # Get checkin behavior data for additional analysis
+        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+        
+        if overall_checkins:
+            story.append(Paragraph("TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN", self.styles['SectionHeader']))
+            
+            # Top 15 most active checkin users
+            top_checkin_users = overall_checkins[:15]
+            checkin_data = [['STT', 'Nhân viên', 'Tổng checkin', 'Tần suất/tuần', 'Checkin tuần trước']]
+            
+            for i, user in enumerate(top_checkin_users, 1):
+                checkin_data.append([
+                    str(i),
+                    user['user_name'][:20] + '...' if len(user['user_name']) > 20 else user['user_name'],
+                    str(user.get('total_checkins', 0)),
+                    f"{user.get('checkin_frequency_per_week', 0):.2f}",
+                    str(user.get('last_week_checkins', 0))
+                ])
+            
+            checkin_table = Table(checkin_data, colWidths=[0.5*inch, 2.5*inch, 1*inch, 1*inch, 1*inch])
+            checkin_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(checkin_table)
+        
+        # Footer
+        story.append(Spacer(1, 30))
+        footer_text = f"""
+        <para align="center">
+        <b>A Plus Mineral Material Corporation</b><br/>
+        Báo cáo được tạo tự động bởi hệ thống OKR Analysis<br/>
+        Ngày tạo: {current_date}
+        </para>
+        """
+        story.append(Paragraph(footer_text, self.styles['CustomNormal']))
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
 
 class OKRAnalysisSystem:
     """OKR Analysis System for Streamlit"""
@@ -1350,262 +1635,23 @@ class EmailReportGenerator:
         html += "</tbody></table>"
         return html
 
-    def create_pdf_report(self, html_content, filename_prefix="okr_report"):
-        """Create PDF report from HTML content"""
-        try:
-            # Create a temporary file for the PDF
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            temp_file = tempfile.NamedTemporaryFile(
-                delete=False, 
-                suffix='.pdf', 
-                prefix=f'{filename_prefix}_{timestamp}_'
-            )
-            
-            # Enhanced CSS for better PDF formatting
-            pdf_css = CSS(string="""
-                @page {
-                    size: A4;
-                    margin: 2cm;
-                    @bottom-center {
-                        content: "Trang " counter(page) " / " counter(pages);
-                        font-size: 10px;
-                        color: #7f8c8d;
-                    }
-                }
-                
-                body {
-                    font-family: 'DejaVu Sans', sans-serif;
-                    font-size: 11px;
-                    line-height: 1.4;
-                    color: #2c3e50;
-                }
-                
-                .header {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                    padding: 20px;
-                    border-radius: 8px;
-                    text-align: center;
-                    margin-bottom: 20px;
-                    page-break-inside: avoid;
-                }
-                
-                .header h1 {
-                    margin: 0 0 8px 0;
-                    font-size: 20px;
-                    font-weight: bold;
-                }
-                
-                .header h2 {
-                    margin: 0 0 8px 0;
-                    font-size: 16px;
-                    font-weight: normal;
-                }
-                
-                .header p {
-                    margin: 0;
-                    font-size: 12px;
-                }
-                
-                .section {
-                    background: white;
-                    padding: 15px;
-                    margin: 15px 0;
-                    border-radius: 8px;
-                    border: 1px solid #e9ecef;
-                    page-break-inside: avoid;
-                }
-                
-                .section h2 {
-                    color: #2c3e50;
-                    border-bottom: 2px solid #3498db;
-                    padding-bottom: 5px;
-                    margin-bottom: 15px;
-                    font-size: 16px;
-                    page-break-after: avoid;
-                }
-                
-                .metrics {
-                    display: flex;
-                    justify-content: space-around;
-                    margin: 15px 0;
-                    flex-wrap: wrap;
-                }
-                
-                .metric {
-                    background: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 8px;
-                    text-align: center;
-                    margin: 5px;
-                    min-width: 100px;
-                    flex: 1;
-                    border: 1px solid #e9ecef;
-                }
-                
-                .metric-value {
-                    font-size: 24px;
-                    font-weight: bold;
-                    color: #3498db;
-                    margin-bottom: 5px;
-                }
-                
-                .metric-label {
-                    font-size: 10px;
-                    color: #7f8c8d;
-                    font-weight: bold;
-                    text-transform: uppercase;
-                }
-                
-                table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 15px 0;
-                    background: white;
-                    font-size: 10px;
-                    page-break-inside: auto;
-                }
-                
-                th {
-                    padding: 8px;
-                    text-align: left;
-                    background: #3498db;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 9px;
-                    text-transform: uppercase;
-                }
-                
-                td {
-                    padding: 6px 8px;
-                    border-bottom: 1px solid #ecf0f1;
-                    font-size: 9px;
-                }
-                
-                tr:nth-child(even) {
-                    background: #f8f9fa;
-                }
-                
-                .modern-chart {
-                    background: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 8px;
-                    margin: 15px 0;
-                    border: 1px solid #e9ecef;
-                    page-break-inside: avoid;
-                }
-                
-                .modern-chart h3 {
-                    text-align: center;
-                    margin-bottom: 15px;
-                    color: #2c3e50;
-                    font-size: 14px;
-                }
-                
-                .alert {
-                    padding: 10px;
-                    margin: 10px 0;
-                    border-radius: 5px;
-                    border-left: 4px solid;
-                    font-size: 10px;
-                }
-                
-                .alert-warning {
-                    background: #fff3cd;
-                    border-left-color: #f39c12;
-                    color: #856404;
-                }
-                
-                .alert-info {
-                    background: #d1ecf1;
-                    border-left-color: #3498db;
-                    color: #0c5460;
-                }
-                
-                .footer {
-                    text-align: center;
-                    margin-top: 30px;
-                    padding: 15px;
-                    background: #2c3e50;
-                    color: white;
-                    border-radius: 8px;
-                    font-size: 10px;
-                    page-break-inside: avoid;
-                }
-                
-                .positive {
-                    color: #27AE60;
-                    font-weight: bold;
-                }
-                
-                .negative {
-                    color: #E74C3C;
-                    font-weight: bold;
-                }
-                
-                .neutral {
-                    color: #F39C12;
-                    font-weight: bold;
-                }
-            """)
-            
-            # Generate PDF
-            html_doc = HTML(string=html_content)
-            html_doc.write_pdf(temp_file.name, stylesheets=[pdf_css])
-            
-            # Read the PDF content
-            with open(temp_file.name, 'rb') as f:
-                pdf_content = f.read()
-            
-            # Clean up temporary file
-            temp_file.close()
-            os.unlink(temp_file.name)
-            
-            return pdf_content
-            
-        except Exception as e:
-            st.error(f"Error creating PDF report: {e}")
-            return None
-
     def send_email_report(self, email_from, password, email_to, subject, html_content, 
-                         pdf_content=None, company_name="A Plus Mineral Material Corporation"):
-        """Send email report with PDF attachment and improved compatibility"""
+                         company_name="A Plus Mineral Material Corporation"):
+        """Send email report with improved compatibility"""
         try:
             # Create message
-            message = MIMEMultipart('mixed')  # Changed to 'mixed' for attachments
+            message = MIMEMultipart('related')  # Changed to 'related' for better image support
             message['From'] = f"OKR System {company_name} <{email_from}>"
             message['To'] = email_to
             message['Subject'] = subject
             
-            # Create message container for HTML content
+            # Create message container
             msg_alternative = MIMEMultipart('alternative')
             message.attach(msg_alternative)
             
             # Add HTML content
             html_part = MIMEText(html_content, 'html', 'utf-8')
             msg_alternative.attach(html_part)
-            
-            # Add PDF attachment if provided
-            if pdf_content:
-                try:
-                    pdf_attachment = MIMEBase('application', 'pdf')
-                    pdf_attachment.set_payload(pdf_content)
-                    encoders.encode_base64(pdf_attachment)
-                    
-                    # Generate filename with timestamp
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    filename = f"OKR_Report_{timestamp}.pdf"
-                    
-                    pdf_attachment.add_header(
-                        'Content-Disposition', 
-                        f'attachment; filename={filename}'
-                    )
-                    pdf_attachment.add_header('Content-Type', 'application/pdf')
-                    
-                    message.attach(pdf_attachment)
-                    
-                except Exception as e:
-                    st.warning(f"Could not attach PDF file: {e}")
             
             # Connect to SMTP server
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
@@ -1616,14 +1662,146 @@ class EmailReportGenerator:
             server.send_message(message)
             server.quit()
             
-            attachment_msg = " với file PDF đính kèm" if pdf_content else ""
-            return True, f"Email đã gửi thành công{attachment_msg}!"
+            return True, "Email sent successfully!"
             
         except smtplib.SMTPAuthenticationError:
             return False, "Lỗi xác thực: Vui lòng kiểm tra lại email và mật khẩu"
         except Exception as e:
             return False, f"Lỗi gửi email: {str(e)}"
 
+    def send_email_with_pdf_report(self, email_from, password, email_to, subject, html_content, 
+                                  pdf_buffer, company_name="A Plus Mineral Material Corporation"):
+        """Send email report with PDF attachment"""
+        try:
+            # Create message
+            message = MIMEMultipart('mixed')  # Changed to 'mixed' for attachments
+            message['From'] = f"OKR System {company_name} <{email_from}>"
+            message['To'] = email_to
+            message['Subject'] = subject
+            
+            # Create message container for HTML
+            msg_alternative = MIMEMultipart('alternative')
+            
+            # Add HTML content
+            html_part = MIMEText(html_content, 'html', 'utf-8')
+            msg_alternative.attach(html_part)
+            
+            # Attach HTML part to main message
+            message.attach(msg_alternative)
+            
+            # Add PDF attachment
+            if pdf_buffer:
+                pdf_attachment = MIMEBase('application', 'pdf')
+                pdf_attachment.set_payload(pdf_buffer.getvalue())
+                encoders.encode_base64(pdf_attachment)
+                
+                # Generate filename with current date
+                pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                pdf_attachment.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename="{pdf_filename}"'
+                )
+                message.attach(pdf_attachment)
+            
+            # Connect to SMTP server
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(email_from, password)
+            
+            # Send email
+            server.send_message(message)
+            server.quit()
+            
+            return True, "Email with PDF report sent successfully!"
+            
+        except smtplib.SMTPAuthenticationError:
+            return False, "Lỗi xác thực: Vui lòng kiểm tra lại email và mật khẩu"
+        except Exception as e:
+            return False, f"Lỗi gửi email: {str(e)}"
+
+def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
+    """Send email report with PDF attachment"""
+    
+    st.header("📧 Sending Email Report with PDF")
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(message, progress):
+        status_text.text(message)
+        progress_bar.progress(progress)
+    
+    try:
+        # Load and process data
+        update_progress("Loading data for email report...", 0.1)
+        df = analyzer.load_and_process_data(update_progress)
+        
+        if df is None or df.empty:
+            st.error("❌ Failed to load data for email report")
+            return
+        
+        update_progress("Analyzing missing goals and checkins...", 0.3)
+        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
+        
+        update_progress("Calculating OKR shifts...", 0.5)
+        okr_shifts = analyzer.calculate_okr_shifts_by_user()
+        
+        update_progress("Creating PDF report...", 0.7)
+        # Create PDF report
+        pdf_generator = PDFReportGenerator()
+        pdf_buffer = pdf_generator.create_pdf_report(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts
+        )
+        
+        update_progress("Creating email content...", 0.8)
+        html_content = email_generator.create_email_content(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts
+        )
+        
+        update_progress("Sending email with PDF attachment...", 0.9)
+        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
+        
+        # Use enhanced email generator with PDF capability
+        enhanced_email_generator = EmailReportGeneratorUpdated()
+        success, message = enhanced_email_generator.send_email_with_pdf_report(
+            email_from, email_password, email_to, subject, html_content, pdf_buffer
+        )
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if success:
+            st.success(f"✅ {message}")
+            st.info(f"📧 Email report with PDF attachment sent to: {email_to}")
+            
+            # Show email preview and PDF download option
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.checkbox("📋 Show email preview", value=False):
+                    st.subheader("Email Preview")
+                    st.components.v1.html(html_content, height=600, scrolling=True)
+            
+            with col2:
+                if pdf_buffer:
+                    pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    st.download_button(
+                        label="📥 Download PDF Report",
+                        data=pdf_buffer.getvalue(),
+                        file_name=pdf_filename,
+                        mime="application/pdf",
+                        key="download_pdf_report"
+                    )
+        else:
+            st.error(f"❌ {message}")
+            
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"❌ Error sending email report: {e}")
 
 # ==================== STREAMLIT APP ====================
 
@@ -1722,7 +1900,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
 
     # Send email report
     if email_button:
-        send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
+        send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
 def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
     """Send email report with analysis results"""
@@ -1752,25 +1930,17 @@ def send_email_report(analyzer, email_generator, selected_cycle, email_from, ema
         update_progress("Calculating OKR shifts...", 0.6)
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
-        update_progress("Creating email content...", 0.7)
+        update_progress("Creating email content...", 0.8)
         html_content = email_generator.create_email_content(
             analyzer, selected_cycle, members_without_goals, members_without_checkins,
             members_with_goals_no_checkins, okr_shifts
         )
         
-        update_progress("Creating PDF report...", 0.8)
-        pdf_content = email_generator.create_pdf_report(html_content)
-        
-        if pdf_content:
-            st.info("✅ PDF report created successfully!")
-        else:
-            st.warning("⚠️ Could not create PDF report. Email will be sent without PDF attachment.")
-        
         update_progress("Sending email...", 0.9)
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
         success, message = email_generator.send_email_report(
-            email_from, email_password, email_to, subject, html_content, pdf_content
+            email_from, email_password, email_to, subject, html_content
         )
         
         progress_bar.empty()
