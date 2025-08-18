@@ -1136,7 +1136,7 @@ class OKRAnalysisSystem:
                     adjustment_applied = True
 
                 # NEW LOGIC: Adjust last_friday_value if current_value < last_friday_value
-                if current_value < last_friday_value :
+                if current_value < last_friday_value or last_friday_value != current_value - final_okr_goal_shift:
                     last_friday_value = current_value - final_okr_goal_shift
                 
                 user_okr_shifts.append({
