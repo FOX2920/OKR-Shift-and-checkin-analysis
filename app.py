@@ -1124,9 +1124,6 @@ class OKRAnalysisSystem:
                 current_value = self.calculate_current_value(user_df)
                 last_friday_value, kr_details = self.calculate_last_friday_value(reference_friday, user_df)
                 
-                # NEW LOGIC: Adjust last_friday_value if current_value < last_friday_value
-                if current_value < last_friday_value:
-                    last_friday_value = current_value - final_okr_goal_shift
                 
                 legacy_okr_shift = current_value - last_friday_value
     
@@ -1137,7 +1134,11 @@ class OKRAnalysisSystem:
                 if final_okr_goal_shift > current_value:
                     adjusted_okr_shift = current_value - last_friday_value
                     adjustment_applied = True
-    
+
+                # NEW LOGIC: Adjust last_friday_value if current_value < last_friday_value
+                if current_value < last_friday_value :
+                    last_friday_value = current_value - final_okr_goal_shift
+                
                 user_okr_shifts.append({
                     'user_name': user,
                     'okr_shift': adjusted_okr_shift,  # Use adjusted value
