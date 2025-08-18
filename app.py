@@ -1103,7 +1103,7 @@ class OKRAnalysisSystem:
         except Exception as e:
             st.error(f"Error calculating final_okr_goal_shift: {e}")
             return 0
-        
+            
     def calculate_okr_shifts_by_user(self) -> List[Dict]:
         """Calculate OKR shifts for each user always comparing against previous Friday
         If shift > current_value, then shift = current_value - last_friday_value"""
@@ -1123,6 +1123,11 @@ class OKRAnalysisSystem:
                 # Calculate current and last Friday values for comparison/legacy
                 current_value = self.calculate_current_value(user_df)
                 last_friday_value, kr_details = self.calculate_last_friday_value(reference_friday, user_df)
+                
+                # NEW LOGIC: Adjust last_friday_value if current_value < last_friday_value
+                if current_value < last_friday_value:
+                    last_friday_value = current_value - final_okr_goal_shift
+                
                 legacy_okr_shift = current_value - last_friday_value
     
                 # NEW LOGIC: If shift > current_value, then shift = current_value - last_friday_value
