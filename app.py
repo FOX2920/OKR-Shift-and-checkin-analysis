@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, date, timezone, timedelta
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import warnings
 import os
 import smtplib
@@ -19,10 +19,17 @@ from email import encoders
 import base64
 from io import BytesIO
 import plotly.io as pio
+import io
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib
 
+# Configuration
 warnings.filterwarnings('ignore')
+matplotlib.use('Agg')
 
-# Set page config
+# Streamlit configuration
 st.set_page_config(
     page_title="OKR & Checkin Analysis",
     page_icon="🎯",
@@ -30,461 +37,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# THAY THẾ TỪ DÒNG IMPORT ĐẾN HẾT CLASS PDFReportGenerator
+class DateUtils:
+    """Utility class for date calculations"""
+    
+    @staticmethod
+    def get_last_friday_date() -> datetime:
+        """Get last Friday date - always returns Friday of previous week"""
+        today = datetime.now()
+        current_weekday = today.weekday()
+        days_to_monday_current_week = current_weekday
+        monday_current_week = today - timedelta(days=days_to_monday_current_week)
+        monday_previous_week = monday_current_week - timedelta(days=7)
+        friday_previous_week = monday_previous_week + timedelta(days=4)
+        return friday_previous_week
 
-# Thay vì import ReportLab, sử dụng matplotlib
-import io
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+    @staticmethod
+    def get_quarter_start_date() -> datetime:
+        """Get current quarter start date"""
+        today = datetime.now()
+        quarter = (today.month - 1) // 3 + 1
+        quarter_start_month = (quarter - 1) * 3 + 1
+        return datetime(today.year, quarter_start_month, 1)
 
-class PDFReportGenerator:
-    """Generate PDF reports for OKR analysis using matplotlib with improved layout"""
-    
-    def __init__(self):
-        # Set up matplotlib for Vietnamese text support
-        plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'sans-serif']
-        plt.rcParams['font.size'] = 9  # Slightly smaller default font
-        plt.rcParams['axes.unicode_minus'] = False
-        
-    def register_vietnamese_fonts(self):
-        """Dummy method for compatibility - no longer needed with matplotlib"""
-        pass
-    
-    def setup_custom_styles(self):
-        """Dummy method for compatibility - no longer needed with matplotlib"""
-        pass
-        
-    def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                         members_with_goals_no_checkins, okr_shifts):
-        """Create comprehensive PDF report using matplotlib"""
-        
-        buffer = io.BytesIO()
-        
-        with PdfPages(buffer) as pdf:
-            # Page 1: Title and Summary
-            self._create_title_page(pdf, selected_cycle, analyzer, members_without_goals, 
-                                  members_without_checkins, members_with_goals_no_checkins, okr_shifts)
-            
-            # Page 2: Charts and Analysis
-            self._create_charts_page(pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts)
-            
-            # Page 3: Detailed Tables
-            self._create_tables_page(pdf, members_without_goals, members_without_checkins, okr_shifts)
-            
-            # Page 4: Checkin Analysis
-            self._create_checkin_page(pdf, analyzer)
-        
-        buffer.seek(0)
-        return buffer
-    
-    def _create_title_page(self, pdf, selected_cycle, analyzer, members_without_goals, 
-                          members_without_checkins, members_with_goals_no_checkins, okr_shifts):
-        """Create title page with summary statistics - Fixed layout"""
-        
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4 size
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 14)
-        ax.axis('off')
-        
-        current_date = datetime.now().strftime("%d/%m/%Y")
-        
-        # Title section with proper spacing
-        y_pos = 13.2
-        ax.text(5, y_pos, 'BÁO CÁO TIẾN ĐỘ OKR & CHECKIN', 
-                fontsize=18, fontweight='bold', ha='center', color='#2c3e50')
-        
-        y_pos -= 0.5
-        ax.text(5, y_pos, f'{selected_cycle["name"]}', 
-                fontsize=14, fontweight='bold', ha='center', color='#3498db')
-        
-        y_pos -= 0.4
-        ax.text(5, y_pos, f'Ngày báo cáo: {current_date}', 
-                fontsize=11, ha='center', color='#7f8c8d')
-        
-        # Add line separator with proper spacing
-        y_pos -= 0.3
-        ax.plot([1, 9], [y_pos, y_pos], color='#3498db', linewidth=2)
-        
-        # Summary statistics with better spacing
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-        members_with_goals = total_members - len(members_without_goals)
-        members_with_checkins = total_members - len(members_without_checkins)
-        
-        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
-        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
-        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
-        
-        # Create summary boxes with improved layout
-        y_pos -= 0.6
-        box_height = 1.2
-        box_width = 7
-        
-        # Summary data
-        summary_data = [
-            ('TỔNG QUAN', '#3498db', [
-                f'Tổng nhân viên: {total_members}',
-                f'Có OKR: {members_with_goals} ({(members_with_goals/total_members*100):.1f}%)' if total_members > 0 else 'Có OKR: 0',
-                f'Có Checkin: {members_with_checkins} ({(members_with_checkins/total_members*100):.1f}%)' if total_members > 0 else 'Có Checkin: 0'
-            ]),
-            ('PHÂN TÍCH TIẾN ĐỘ', '#27AE60', [
-                f'Nhân viên tiến bộ: {progress_users}',
-                f'Nhân viên ổn định: {stable_users}',
-                f'Nhân viên cần hỗ trợ: {issue_users}'
-            ])
-        ]
-        
-        for title, color, items in summary_data:
-            # Draw box
-            rect = patches.Rectangle((1.5, y_pos - box_height), box_width, box_height, 
-                                   linewidth=2, edgecolor=color, facecolor=color, alpha=0.1)
-            ax.add_patch(rect)
-            
-            # Title
-            ax.text(5, y_pos - 0.25, title, fontsize=13, fontweight='bold', 
-                   ha='center', color=color)
-            
-            # Items with better spacing
-            for i, item in enumerate(items):
-                ax.text(2, y_pos - 0.6 - (i * 0.2), f'• {item}', fontsize=10, color='#2c3e50')
-            
-            y_pos -= 2.4  # Increased spacing between sections
-        
-        # Key insights box with better positioning
-        insights_y = y_pos - 0.2
-        rect = patches.Rectangle((1.5, insights_y - 2.2), box_width, 2.0, 
-                               linewidth=2, edgecolor='#e74c3c', facecolor='#e74c3c', alpha=0.1)
-        ax.add_patch(rect)
-        
-        ax.text(5, insights_y - 0.25, 'ĐIỂM CẦN QUAN TÂM', fontsize=13, fontweight='bold', 
-               ha='center', color='#e74c3c')
-        
-        insights = [
-            f'Nhân viên chưa có OKR: {len(members_without_goals)} người',
-            f'Nhân viên chưa checkin: {len(members_without_checkins)} người',
-            f'Có OKR nhưng chưa checkin: {len(members_with_goals_no_checkins)} người'
-        ]
-        
-        for i, insight in enumerate(insights):
-            ax.text(2, insights_y - 0.8 - (i * 0.3), f'⚠️ {insight}', fontsize=10, color='#e74c3c')
-        
-        # Footer with proper positioning
-        ax.text(5, 1.2, 'A Plus Mineral Material Corporation', 
-                fontsize=13, fontweight='bold', ha='center', color='#2c3e50')
-        ax.text(5, 0.8, 'Báo cáo được tạo tự động bởi hệ thống OKR Analysis', 
-                fontsize=9, ha='center', color='#7f8c8d')
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def _create_charts_page(self, pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with charts and visualizations - Updated layout"""
-        
-        fig = plt.figure(figsize=(8.27, 11.69))
-        
-        # Title
-        fig.suptitle('BIỂU ĐỒ PHÂN TÍCH', fontsize=16, fontweight='bold', y=0.95, color='#2c3e50')
-        
-        # Chart 1: Progress Distribution - Top center (larger)
-        ax1 = plt.subplot(2, 1, 1)
-        if okr_shifts:
-            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
-            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
-            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0])
-            
-            sizes = [progress_users, stable_users, issue_users]
-            labels = ['Tiến bộ', 'Ổn định', 'Cần hỗ trợ']
-            colors = ['#27AE60', '#F39C12', '#E74C3C']
-            
-            # Filter out zero values
-            non_zero_data = [(size, label, color) for size, label, color in zip(sizes, labels, colors) if size > 0]
-            if non_zero_data:
-                sizes, labels, colors = zip(*non_zero_data)
-                wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
-                                                 colors=colors, startangle=90)
-                ax1.set_title('Phân bố tiến độ nhân viên', fontsize=13, fontweight='bold', pad=20)
-                
-                # Adjust text size
-                for text in texts:
-                    text.set_fontsize(11)
-                for autotext in autotexts:
-                    autotext.set_fontsize(10)
-                    autotext.set_color('white')
-                    autotext.set_weight('bold')
-        
-        # Chart 2: OKR Shifts Bar Chart - Bottom (larger and with full names)
-        ax2 = plt.subplot(2, 1, 2)
-        if okr_shifts:
-            top_shifts = okr_shifts[:15]  # Increased to 15 for more data
-            names = [u['user_name'] for u in top_shifts]  # Show full names
-            values = [u['okr_shift'] for u in top_shifts]
-            
-            colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
-            
-            bars = ax2.bar(range(len(names)), values, color=colors)
-            ax2.set_xticks(range(len(names)))
-            ax2.set_xticklabels(names, rotation=45, ha='right', fontsize=9)  # Increased font size
-            ax2.set_title('Dịch chuyển OKR (Top 15)', fontsize=13, fontweight='bold', pad=20)
-            ax2.set_ylabel('Dịch chuyển OKR', fontsize=10)
-            ax2.grid(True, alpha=0.3)
-            
-            # Add value labels on bars with better positioning
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax2.text(bar.get_x() + bar.get_width()/2., 
-                        height + (0.02 if height >= 0 else -0.08),
-                        f'{value:.2f}', ha='center', 
-                        va='bottom' if height >= 0 else 'top', fontsize=8)
-        
-        plt.tight_layout(rect=[0, 0.02, 1, 0.92])  # Leave space for main title
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def _create_tables_page(self, pdf, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with detailed tables - Fixed layout"""
-        
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 14)
-        ax.axis('off')
-        
-        y_pos = 13.5
-        
-        # Page title
-        ax.text(5, y_pos, 'CHI TIẾT PHÂN TÍCH', fontsize=15, fontweight='bold', 
-               ha='center', color='#2c3e50')
-        y_pos -= 0.8
-        
-        # Members without goals
-        if members_without_goals and y_pos > 6:  # Check if we have space
-            ax.text(0.5, y_pos, f'NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)', 
-                   fontsize=11, fontweight='bold', color='#e74c3c')
-            y_pos -= 0.5
-            
-            # Table header
-            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
-            ax.text(1.5, y_pos, 'Tên', fontsize=9, fontweight='bold')
-            ax.text(4, y_pos, 'Username', fontsize=9, fontweight='bold')
-            ax.text(6.5, y_pos, 'Chức vụ', fontsize=9, fontweight='bold')
-            
-            # Draw header line
-            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-            y_pos -= 0.4
-            
-            # Table rows (limit to first 12 for spacing)
-            for i, member in enumerate(members_without_goals[:12], 1):
-                if y_pos < 6:  # Stop if we're too low
-                    break
-                ax.text(0.5, y_pos, str(i), fontsize=8)
-                ax.text(1.5, y_pos, member.get('name', '')[:18], fontsize=8)  # Truncate long names
-                ax.text(4, y_pos, member.get('username', ''), fontsize=8)
-                ax.text(6.5, y_pos, member.get('job', '')[:20], fontsize=8)  # Truncate long job titles
-                y_pos -= 0.3
-            
-            if len(members_without_goals) > 12:
-                ax.text(0.5, y_pos, f'... và {len(members_without_goals) - 12} nhân viên khác', 
-                       fontsize=8, style='italic', color='#7f8c8d')
-                y_pos -= 0.4
-            
-            y_pos -= 0.6
-        
-        # Top performers section
-        if okr_shifts and y_pos > 3:
-            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:8]  # Reduced to 8
-            if top_performers:
-                ax.text(0.5, y_pos, f'TOP NHÂN VIÊN TIẾN BỘ ({len(top_performers)} người)', 
-                       fontsize=11, fontweight='bold', color='#27AE60')
-                y_pos -= 0.5
-                
-                # Table header
-                ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
-                ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
-                ax.text(4.5, y_pos, 'Dịch chuyển', fontsize=9, fontweight='bold')
-                ax.text(6.5, y_pos, 'Hiện tại', fontsize=9, fontweight='bold')
-                ax.text(8, y_pos, 'Trước đó', fontsize=9, fontweight='bold')
-                
-                # Draw header line
-                ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-                y_pos -= 0.4
-                
-                # Table rows
-                for i, user in enumerate(top_performers, 1):
-                    if y_pos < 1:
-                        break
-                    ax.text(0.5, y_pos, str(i), fontsize=8)
-                    ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)  # Truncate long names
-                    ax.text(4.5, y_pos, f"{user['okr_shift']:.2f}", fontsize=8, color='#27AE60')
-                    ax.text(6.5, y_pos, f"{user['current_value']:.2f}", fontsize=8)
-                    ax.text(8, y_pos, f"{user['last_friday_value']:.2f}", fontsize=8)
-                    y_pos -= 0.3
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def _create_checkin_page(self, pdf, analyzer):
-        """Create page with checkin analysis - Fixed layout"""
-        
-        # Get checkin behavior data
-        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
-        
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 14)
-        ax.axis('off')
-        
-        y_pos = 13.5
-        
-        # Page title
-        ax.text(5, y_pos, 'PHÂN TÍCH HOẠT ĐỘNG CHECKIN', fontsize=15, fontweight='bold', 
-               ha='center', color='#2c3e50')
-        y_pos -= 1
-        
-        if overall_checkins:
-            ax.text(0.5, y_pos, f'TOP NHÂN VIÊN HOẠT ĐỘNG NHẤT ({min(len(overall_checkins), 15)} người)', 
-                   fontsize=11, fontweight='bold', color='#3498db')
-            y_pos -= 0.5
-            
-            # Table header
-            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
-            ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
-            ax.text(4.5, y_pos, 'Tổng checkin', fontsize=9, fontweight='bold')
-            ax.text(6.5, y_pos, 'Tần suất/tuần', fontsize=9, fontweight='bold')
-            ax.text(8.5, y_pos, 'Tuần trước', fontsize=9, fontweight='bold')
-            
-            # Draw header line
-            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-            y_pos -= 0.4
-            
-            # Table rows (top 15 with better spacing)
-            for i, user in enumerate(overall_checkins[:15], 1):
-                if y_pos < 1:
-                    break
-                ax.text(0.5, y_pos, str(i), fontsize=8)
-                ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)  # Truncate long names
-                ax.text(4.5, y_pos, str(user.get('total_checkins', 0)), fontsize=8)
-                ax.text(6.5, y_pos, f"{user.get('checkin_frequency_per_week', 0):.2f}", fontsize=8)
-                ax.text(8.5, y_pos, str(user.get('last_week_checkins', 0)), fontsize=8)
-                y_pos -= 0.3
-        else:
-            ax.text(5, y_pos, 'Không có dữ liệu checkin', fontsize=11, ha='center', color='#7f8c8d')
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def create_summary_chart(self, data, title, chart_type='bar'):
-        """Create matplotlib chart for PDF with Vietnamese font support - kept for compatibility"""
-        try:
-            # Thiết lập font cho matplotlib để hỗ trợ tiếng Việt
-            plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei']
-            
-            fig, ax = plt.subplots(figsize=(8, 4))
-            
-            if chart_type == 'pie' and data:
-                labels = list(data.keys())
-                sizes = list(data.values())
-                colors_pie = ['#27AE60', '#E74C3C', '#3498DB', '#F39C12', '#9B59B6']
-                
-                wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', 
-                                                 colors=colors_pie[:len(labels)], startangle=90)
-                ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
-                
-                # Đảm bảo text hiển thị đúng
-                for text in texts:
-                    text.set_fontsize(10)
-                for autotext in autotexts:
-                    autotext.set_color('white')
-                    autotext.set_fontsize(9)
-                    autotext.set_weight('bold')
-                
-            elif chart_type == 'bar' and data:
-                names = list(data.keys())[:15]  # Increased to 15
-                values = list(data.values())[:15]
-                
-                bars = ax.bar(names, values, color=['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values])
-                ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
-                ax.set_xlabel('Nhân viên')
-                ax.set_ylabel('Dịch chuyển OKR')
-                
-                # Rotate x-axis labels
-                plt.xticks(rotation=45, ha='right', fontsize=9)  # Increased font size
-                
-                # Add value labels on bars
-                for bar, value in zip(bars, values):
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height + (0.01 if height >= 0 else -0.05),
-                           f'{value:.2f}', ha='center', va='bottom' if height >= 0 else 'top', fontsize=8)
-            
-            plt.tight_layout()
-            
-            # Save to bytes
-            img_buffer = io.BytesIO()
-            plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
-            img_buffer.seek(0)
-            plt.close()
-            
-            return img_buffer
-            
-        except Exception as e:
-            print(f"Error creating chart: {e}")
-            return None
-
-class OKRAnalysisSystem:
-    """OKR Analysis System for Streamlit"""
-
-    def __init__(self, goal_access_token: str, account_access_token: str):
-        self.goal_access_token = goal_access_token
-        self.account_access_token = account_access_token
-        self.checkin_path = None
-        self.final_df = None
-        self.filtered_members_df = None
-
-    def get_filtered_members(self) -> pd.DataFrame:
-        """Get filtered members from account API"""
-        try:
-            url = "https://account.base.vn/extapi/v1/group/get"
-            data = {
-                "access_token": self.account_access_token,
-                "path": "aplus"
-            }
-            
-            response = requests.post(url, data=data, timeout=30)
-            response.raise_for_status()
-            response_data = response.json()
-            
-            # Get members from response
-            group = response_data.get('group', {})
-            members = group.get('members', [])
-            
-            # Convert to DataFrame with email field
-            df = pd.DataFrame([
-                {
-                    'id': str(m.get('id', '')),
-                    'name': m.get('name', ''),
-                    'username': m.get('username', ''),
-                    'job': m.get('title', ''),
-                    'email': m.get('email', '')  # Added email field
-                }
-                for m in members
-            ])
-            
-            # Filter out unwanted job titles and specific usernames
-            filtered_df = df[~df['job'].str.lower().str.contains('kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường', na=False)]
-            # Filter out specific username "ThuAn"
-            filtered_df = filtered_df[filtered_df['username'] != 'ThuAn']
-            
-            self.filtered_members_df = filtered_df
-            return filtered_df
-            
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching account members: {e}")
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Unexpected error getting members: {e}")
-            return pd.DataFrame()
-
-    def convert_timestamp_to_datetime(self, timestamp) -> Optional[str]:
+    @staticmethod
+    def convert_timestamp_to_datetime(timestamp) -> Optional[str]:
         """Convert timestamp to datetime string"""
         if timestamp is None or timestamp == '' or timestamp == 0:
             return None
@@ -493,219 +69,204 @@ class OKRAnalysisSystem:
         except (ValueError, TypeError):
             return None
 
-    def get_last_friday_date(self) -> datetime:
-        """Get last Friday date - always returns Friday of previous week regardless of current day"""
-        today = datetime.now()
-        
-        # Get current day of week (0=Monday, 6=Sunday)
-        current_weekday = today.weekday()
-        
-        # Calculate days back to Monday of current week
-        days_to_monday_current_week = current_weekday
-        monday_current_week = today - timedelta(days=days_to_monday_current_week)
-        
-        # Get Monday of previous week
-        monday_previous_week = monday_current_week - timedelta(days=7)
-        
-        # Get Friday of previous week (Monday + 4 days)
-        friday_previous_week = monday_previous_week + timedelta(days=4)
-        
-        return friday_previous_week
+class APIClient:
+    """Client for handling API requests"""
+    
+    def __init__(self, goal_token: str, account_token: str):
+        self.goal_token = goal_token
+        self.account_token = account_token
+        self.timeout = 30
 
-    def get_quarter_start_date(self) -> datetime:
-        """Get current quarter start date"""
-        today = datetime.now()
-        quarter = (today.month - 1) // 3 + 1
-        quarter_start_month = (quarter - 1) * 3 + 1
-        return datetime(today.year, quarter_start_month, 1)
+    def make_request(self, url: str, data: Dict, description: str = "") -> requests.Response:
+        """Make HTTP request with error handling"""
+        try:
+            response = requests.post(url, data=data, timeout=self.timeout)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error {description}: {e}")
+            raise
+
+    def get_filtered_members(self) -> pd.DataFrame:
+        """Get filtered members from account API"""
+        url = "https://account.base.vn/extapi/v1/group/get"
+        data = {"access_token": self.account_token, "path": "aplus"}
+        
+        response = self.make_request(url, data, "fetching account members")
+        response_data = response.json()
+        
+        group = response_data.get('group', {})
+        members = group.get('members', [])
+        
+        df = pd.DataFrame([
+            {
+                'id': str(m.get('id', '')),
+                'name': m.get('name', ''),
+                'username': m.get('username', ''),
+                'job': m.get('title', ''),
+                'email': m.get('email', '')
+            }
+            for m in members
+        ])
+        
+        # Apply filters
+        filtered_df = df[~df['job'].str.lower().str.contains(
+            'kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường', 
+            na=False
+        )]
+        filtered_df = filtered_df[filtered_df['username'] != 'ThuAn']
+        
+        return filtered_df
 
     def get_cycle_list(self) -> List[Dict]:
         """Get list of quarterly cycles sorted by most recent first"""
         url = "https://goal.base.vn/extapi/v1/cycle/list"
-        payload = {'access_token': self.goal_access_token}
+        data = {'access_token': self.goal_token}
 
-        try:
-            response = requests.post(url, data=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+        response = self.make_request(url, data, "fetching cycle list")
+        data = response.json()
 
-            quarterly_cycles = []
-            for cycle in data.get('cycles', []):
-                if cycle.get('metatype') == 'quarterly':
-                    try:
-                        start_time = datetime.fromtimestamp(float(cycle['start_time']), tz=timezone.utc)
-                        quarterly_cycles.append({
-                            'name': cycle['name'],
-                            'path': cycle['path'],
-                            'start_time': start_time,
-                            'formatted_start_time': start_time.strftime('%d/%m/%Y')
-                        })
-                    except (ValueError, TypeError) as e:
-                        st.warning(f"Error parsing cycle {cycle.get('name', 'Unknown')}: {e}")
-                        continue
+        quarterly_cycles = []
+        for cycle in data.get('cycles', []):
+            if cycle.get('metatype') == 'quarterly':
+                try:
+                    start_time = datetime.fromtimestamp(float(cycle['start_time']), tz=timezone.utc)
+                    quarterly_cycles.append({
+                        'name': cycle['name'],
+                        'path': cycle['path'],
+                        'start_time': start_time,
+                        'formatted_start_time': start_time.strftime('%d/%m/%Y')
+                    })
+                except (ValueError, TypeError) as e:
+                    st.warning(f"Error parsing cycle {cycle.get('name', 'Unknown')}: {e}")
+                    continue
 
-            return sorted(quarterly_cycles, key=lambda x: x['start_time'], reverse=True)
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching cycle list: {e}")
-            return []
-        except Exception as e:
-            st.error(f"Unexpected error: {e}")
-            return []
+        return sorted(quarterly_cycles, key=lambda x: x['start_time'], reverse=True)
 
     def get_account_users(self) -> pd.DataFrame:
         """Get users from Account API"""
         url = "https://account.base.vn/extapi/v1/users"
-        data = {"access_token": self.account_access_token}
+        data = {"access_token": self.account_token}
 
-        try:
-            response = requests.post(url, data=data, timeout=30)
-            response.raise_for_status()
-            json_response = response.json()
-            
-            if isinstance(json_response, list) and len(json_response) > 0:
-                json_response = json_response[0]
+        response = self.make_request(url, data, "fetching account users")
+        json_response = response.json()
+        
+        if isinstance(json_response, list) and len(json_response) > 0:
+            json_response = json_response[0]
 
-            account_users = json_response.get('users', [])
-            return pd.DataFrame([{
-                'id': str(user['id']),
-                'name': user['name'],
-                'username': user['username']
-            } for user in account_users])
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching account users: {e}")
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Unexpected error getting users: {e}")
-            return pd.DataFrame()
+        account_users = json_response.get('users', [])
+        return pd.DataFrame([{
+            'id': str(user['id']),
+            'name': user['name'],
+            'username': user['username']
+        } for user in account_users])
 
-    def get_goals_data(self) -> pd.DataFrame:
+    def get_goals_data(self, cycle_path: str) -> pd.DataFrame:
         """Get goals data from API"""
         url = "https://goal.base.vn/extapi/v1/cycle/get.full"
-        payload = {'access_token': self.goal_access_token, 'path': self.checkin_path}
+        data = {'access_token': self.goal_token, 'path': cycle_path}
 
-        try:
-            response = requests.post(url, data=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+        response = self.make_request(url, data, "fetching goals data")
+        data = response.json()
 
-            goals_data = []
-            for goal in data.get('goals', []):
-                goal_data = {
-                    'goal_id': goal.get('id'),
-                    'goal_name': goal.get('name', 'Unknown Goal'),
-                    'goal_content': goal.get('content', ''),
-                    'goal_since': self.convert_timestamp_to_datetime(goal.get('since')),
-                    'goal_current_value': goal.get('current_value', 0),
-                    'goal_user_id': str(goal.get('user_id', '')),
-                }
-                goals_data.append(goal_data)
+        goals_data = []
+        for goal in data.get('goals', []):
+            goal_data = {
+                'goal_id': goal.get('id'),
+                'goal_name': goal.get('name', 'Unknown Goal'),
+                'goal_content': goal.get('content', ''),
+                'goal_since': DateUtils.convert_timestamp_to_datetime(goal.get('since')),
+                'goal_current_value': goal.get('current_value', 0),
+                'goal_user_id': str(goal.get('user_id', '')),
+            }
+            goals_data.append(goal_data)
 
-            return pd.DataFrame(goals_data)
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error fetching goals data: {e}")
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Unexpected error getting goals: {e}")
-            return pd.DataFrame()
+        return pd.DataFrame(goals_data)
 
-    def get_krs_data(self) -> pd.DataFrame:
+    def get_krs_data(self, cycle_path: str) -> pd.DataFrame:
         """Get KRs data from API with pagination"""
         url = "https://goal.base.vn/extapi/v1/cycle/krs"
         all_krs = []
         page = 1
-        max_pages = 50  # Safety limit
+        max_pages = 50
 
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         while page <= max_pages:
             status_text.text(f"Loading KRs... Page {page}")
-            data = {"access_token": self.goal_access_token, "path": self.checkin_path, "page": page}
+            data = {"access_token": self.goal_token, "path": cycle_path, "page": page}
 
-            try:
-                response = requests.post(url, data=data, timeout=30)
-                response.raise_for_status()
-                response_data = response.json()
+            response = self.make_request(url, data, f"loading KRs at page {page}")
+            response_data = response.json()
 
-                if isinstance(response_data, list) and len(response_data) > 0:
-                    response_data = response_data[0]
+            if isinstance(response_data, list) and len(response_data) > 0:
+                response_data = response_data[0]
 
-                krs_list = response_data.get("krs", [])
-                if not krs_list:
-                    break
-
-                for kr in krs_list:
-                    kr_data = {
-                        'kr_id': str(kr.get('id', '')),
-                        'kr_name': kr.get('name', 'Unknown KR'),
-                        'kr_content': kr.get('content', ''),
-                        'kr_since': self.convert_timestamp_to_datetime(kr.get('since')),
-                        'kr_current_value': kr.get('current_value', 0),
-                        'kr_user_id': str(kr.get('user_id', '')),
-                        'goal_id': kr.get('goal_id'),
-                    }
-                    all_krs.append(kr_data)
-
-                progress_bar.progress(min(page / 10, 1.0))
-                page += 1
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"Error at page {page}: {e}")
+            krs_list = response_data.get("krs", [])
+            if not krs_list:
                 break
-            except Exception as e:
-                st.error(f"Unexpected error at page {page}: {e}")
-                break
+
+            for kr in krs_list:
+                kr_data = {
+                    'kr_id': str(kr.get('id', '')),
+                    'kr_name': kr.get('name', 'Unknown KR'),
+                    'kr_content': kr.get('content', ''),
+                    'kr_since': DateUtils.convert_timestamp_to_datetime(kr.get('since')),
+                    'kr_current_value': kr.get('current_value', 0),
+                    'kr_user_id': str(kr.get('user_id', '')),
+                    'goal_id': kr.get('goal_id'),
+                }
+                all_krs.append(kr_data)
+
+            progress_bar.progress(min(page / 10, 1.0))
+            page += 1
 
         progress_bar.empty()
         status_text.empty()
         return pd.DataFrame(all_krs)
 
-    def get_all_checkins(self) -> List[Dict]:
+    def get_all_checkins(self, cycle_path: str) -> List[Dict]:
         """Get all checkins with pagination"""
         url = "https://goal.base.vn/extapi/v1/cycle/checkins"
         all_checkins = []
         page = 1
-        max_pages = 100  # Safety limit
+        max_pages = 100
 
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         while page <= max_pages:
             status_text.text(f"Loading checkins... Page {page}")
-            data = {"access_token": self.goal_access_token, "path": self.checkin_path, "page": page}
+            data = {"access_token": self.goal_token, "path": cycle_path, "page": page}
 
-            try:
-                response = requests.post(url, data=data, timeout=30)
-                response.raise_for_status()
-                response_data = response.json()
+            response = self.make_request(url, data, f"loading checkins at page {page}")
+            response_data = response.json()
 
-                if isinstance(response_data, list) and len(response_data) > 0:
-                    response_data = response_data[0]
+            if isinstance(response_data, list) and len(response_data) > 0:
+                response_data = response_data[0]
 
-                checkins = response_data.get('checkins', [])
-                if not checkins:
-                    break
-
-                all_checkins.extend(checkins)
-                progress_bar.progress(min(page / 20, 1.0))
-
-                if len(checkins) < 20:  # Last page typically has fewer items
-                    break
-
-                page += 1
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"Error loading checkins at page {page}: {e}")
+            checkins = response_data.get('checkins', [])
+            if not checkins:
                 break
-            except Exception as e:
-                st.error(f"Unexpected error loading checkins at page {page}: {e}")
+
+            all_checkins.extend(checkins)
+            progress_bar.progress(min(page / 20, 1.0))
+
+            if len(checkins) < 20:
                 break
+
+            page += 1
 
         progress_bar.empty()
         status_text.empty()
         return all_checkins
 
-    def extract_checkin_data(self, all_checkins: List[Dict]) -> pd.DataFrame:
+class DataProcessor:
+    """Handles data processing and transformations"""
+    
+    @staticmethod
+    def extract_checkin_data(all_checkins: List[Dict]) -> pd.DataFrame:
         """Extract checkin data into DataFrame"""
         checkin_list = []
 
@@ -717,13 +278,7 @@ class OKRAnalysisSystem:
                 since_timestamp = checkin.get('since', '')
 
                 # Convert timestamp
-                if since_timestamp:
-                    try:
-                        since_date = datetime.fromtimestamp(int(since_timestamp)).strftime('%Y-%m-%d %H:%M:%S')
-                    except:
-                        since_date = str(since_timestamp)
-                else:
-                    since_date = ''
+                since_date = DateUtils.convert_timestamp_to_datetime(since_timestamp) or ''
 
                 # Extract form value
                 form_value = ''
@@ -757,180 +312,46 @@ class OKRAnalysisSystem:
 
         return pd.DataFrame(checkin_list)
 
-    def analyze_missing_goals_and_checkins(self) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-        """Analyze members without goals and without checkins"""
-        try:
-            if self.filtered_members_df is None or self.final_df is None:
-                return [], [], []
-
-            # Get users with goals
-            users_with_goals = set(self.final_df['goal_user_name'].dropna().unique())
-            
-            # Get users with checkins (anyone who has made at least one checkin)
-            users_with_checkins = set()
-            if 'checkin_user_id' in self.final_df.columns:
-                # Map user IDs to names for checkins
-                user_id_to_name = dict(zip(self.filtered_members_df['id'], self.filtered_members_df['name']))
-                checkin_user_ids = self.final_df['checkin_user_id'].dropna().unique()
-                users_with_checkins = {user_id_to_name.get(uid, uid) for uid in checkin_user_ids if uid in user_id_to_name}
-            
-            # Get all filtered members
-            all_members = set(self.filtered_members_df['name'].unique())
-            
-            # Find missing groups
-            members_without_goals = []
-            members_without_checkins = []
-            members_with_goals_no_checkins = []
-            
-            for member_name in all_members:
-                member_info = self.filtered_members_df[self.filtered_members_df['name'] == member_name].iloc[0].to_dict()
-                
-                has_goal = member_name in users_with_goals
-                has_checkin = member_name in users_with_checkins
-                
-                if not has_goal:
-                    members_without_goals.append({
-                        'name': member_name,
-                        'username': member_info.get('username', ''),
-                        'job': member_info.get('job', ''),
-                        'email': member_info.get('email', ''),  # Added email field
-                        'id': member_info.get('id', '')
-                    })
-                
-                if not has_checkin:
-                    members_without_checkins.append({
-                        'name': member_name,
-                        'username': member_info.get('username', ''),
-                        'job': member_info.get('job', ''),
-                        'email': member_info.get('email', ''),  # Added email field
-                        'id': member_info.get('id', ''),
-                        'has_goal': has_goal
-                    })
-                
-                if has_goal and not has_checkin:
-                    members_with_goals_no_checkins.append({
-                        'name': member_name,
-                        'username': member_info.get('username', ''),
-                        'job': member_info.get('job', ''),
-                        'email': member_info.get('email', ''),  # Added email field
-                        'id': member_info.get('id', '')
-                    })
-            
-            return members_without_goals, members_without_checkins, members_with_goals_no_checkins
-            
-        except Exception as e:
-            st.error(f"Error analyzing missing goals and checkins: {e}")
-            return [], [], []
-
-    def load_and_process_data(self, progress_callback=None):
-        """Main function to load and process all data"""
-        try:
-            if progress_callback:
-                progress_callback("Loading filtered members...", 0.05)
-            
-            # Load filtered members first
-            filtered_members = self.get_filtered_members()
-            if filtered_members.empty:
-                st.error("Failed to load filtered members data")
-                return None
-
-            if progress_callback:
-                progress_callback("Loading users...", 0.1)
-            
-            # Load users
-            users_df = self.get_account_users()
-            if users_df.empty:
-                st.error("Failed to load users data")
-                return None
-            
-            user_id_to_name = dict(zip(users_df['id'], users_df['name']))
-
-            if progress_callback:
-                progress_callback("Loading goals...", 0.2)
-            
-            # Load Goals
-            goals_df = self.get_goals_data()
-            if goals_df.empty:
-                st.error("Failed to load goals data")
-                return None
-
-            if progress_callback:
-                progress_callback("Loading KRs...", 0.4)
-            
-            # Load KRs
-            krs_df = self.get_krs_data()
-
-            if progress_callback:
-                progress_callback("Loading checkins...", 0.6)
-            
-            # Load Checkins
-            all_checkins = self.get_all_checkins()
-            checkin_df = self.extract_checkin_data(all_checkins)
-
-            if progress_callback:
-                progress_callback("Processing data...", 0.8)
-
-            # Join all data
-            joined_df = goals_df.merge(krs_df, on='goal_id', how='left')
-            joined_df['goal_user_name'] = joined_df['goal_user_id'].map(user_id_to_name)
-            self.final_df = joined_df.merge(checkin_df, on='kr_id', how='left')
-
-            # Clean data
-            self._clean_final_data()
-
-            if progress_callback:
-                progress_callback("Data processing completed!", 1.0)
-
-            return self.final_df
-
-        except Exception as e:
-            st.error(f"Error in data processing: {e}")
-            return None
-
-    def _clean_final_data(self):
+    @staticmethod
+    def clean_final_data(df: pd.DataFrame) -> pd.DataFrame:
         """Clean and prepare final dataset"""
         try:
             # Fill NaN values
-            self.final_df['kr_current_value'] = pd.to_numeric(self.final_df['kr_current_value'], errors='coerce').fillna(0.00)
-            self.final_df['checkin_kr_current_value'] = pd.to_numeric(self.final_df['checkin_kr_current_value'], errors='coerce').fillna(0.00)
+            df['kr_current_value'] = pd.to_numeric(df['kr_current_value'], errors='coerce').fillna(0.00)
+            df['checkin_kr_current_value'] = pd.to_numeric(df['checkin_kr_current_value'], errors='coerce').fillna(0.00)
 
             # Fill dates
-            self.final_df['kr_since'] = self.final_df['kr_since'].fillna(self.final_df['goal_since'])
-            self.final_df['checkin_since'] = self.final_df['checkin_since'].fillna(self.final_df['kr_since'])
+            df['kr_since'] = df['kr_since'].fillna(df['goal_since'])
+            df['checkin_since'] = df['checkin_since'].fillna(df['kr_since'])
 
             # Drop unused columns
             columns_to_drop = ['goal_user_id', 'kr_user_id']
-            existing_columns_to_drop = [col for col in columns_to_drop if col in self.final_df.columns]
+            existing_columns_to_drop = [col for col in columns_to_drop if col in df.columns]
             if existing_columns_to_drop:
-                self.final_df = self.final_df.drop(columns=existing_columns_to_drop)
+                df = df.drop(columns=existing_columns_to_drop)
 
+            return df
         except Exception as e:
             st.error(f"Error cleaning data: {e}")
+            return df
 
-    def calculate_current_value(self, df: pd.DataFrame = None) -> float:
+class OKRCalculator:
+    """Handles OKR calculations and analysis"""
+    
+    @staticmethod
+    def calculate_current_value(df: pd.DataFrame) -> float:
         """Calculate current OKR value using average of goal_current_value for unique goal_names"""
-        if df is None:
-            df = self.final_df
-    
         try:
-            # Get unique goal_names and their goal_current_value
             unique_goals = df.groupby('goal_name')['goal_current_value'].first().reset_index()
-            
-            # Convert goal_current_value to numeric
             unique_goals['goal_current_value'] = pd.to_numeric(unique_goals['goal_current_value'], errors='coerce').fillna(0)
-            
-            # Calculate average of goal_current_value for unique goals
             return unique_goals['goal_current_value'].mean() if len(unique_goals) > 0 else 0
-    
         except Exception as e:
             st.error(f"Error calculating current value: {e}")
             return 0
 
-    def calculate_last_friday_value(self, last_friday: datetime, df: pd.DataFrame = None) -> Tuple[float, List[Dict]]:
+    @staticmethod
+    def calculate_last_friday_value(last_friday: datetime, df: pd.DataFrame) -> Tuple[float, List[Dict]]:
         """Calculate OKR value as of last Friday"""
-        if df is None:
-            df = self.final_df
-
         try:
             df = df.copy()
             df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
@@ -994,34 +415,28 @@ class OKRAnalysisSystem:
             st.error(f"Error calculating last Friday value: {e}")
             return 0, []
 
-    def calculate_kr_shift_last_friday(self, row: pd.Series, last_friday: datetime) -> float:
-        """Calculate kr_shift_last_friday = kr_current_value - last_friday_checkin_value
-        Always compares against Friday of previous week"""
+    @staticmethod
+    def calculate_kr_shift_last_friday(row: pd.Series, last_friday: datetime, final_df: pd.DataFrame) -> float:
+        """Calculate kr_shift_last_friday = kr_current_value - last_friday_checkin_value"""
         try:
-            # Get current kr value
             kr_current_value = pd.to_numeric(row.get('kr_current_value', 0), errors='coerce')
             if pd.isna(kr_current_value):
                 kr_current_value = 0
             
-            # Calculate last friday checkin value for this KR
             kr_id = row.get('kr_id', '')
             if not kr_id:
-                return kr_current_value  # If no KR ID, shift = current value
+                return kr_current_value
             
-            # Filter data for this specific KR and find checkins within range
-            quarter_start = self.get_quarter_start_date()
+            quarter_start = DateUtils.get_quarter_start_date()
+            reference_friday = DateUtils.get_last_friday_date()
             
-            # Important: Use the reference Friday (previous Friday) as the cutoff
-            reference_friday = self.get_last_friday_date()
-            
-            kr_checkins = self.final_df[
-                (self.final_df['kr_id'] == kr_id) & 
-                (self.final_df['checkin_id'].notna()) &
-                (self.final_df['checkin_name'].notna()) &
-                (self.final_df['checkin_name'] != '')
+            kr_checkins = final_df[
+                (final_df['kr_id'] == kr_id) & 
+                (final_df['checkin_id'].notna()) &
+                (final_df['checkin_name'].notna()) &
+                (final_df['checkin_name'] != '')
             ].copy()
             
-            # Convert checkin dates and filter by time range up to reference Friday
             if not kr_checkins.empty:
                 kr_checkins['checkin_since_dt'] = pd.to_datetime(kr_checkins['checkin_since'], errors='coerce')
                 kr_checkins = kr_checkins[
@@ -1029,7 +444,6 @@ class OKRAnalysisSystem:
                     (kr_checkins['checkin_since_dt'] <= reference_friday)
                 ]
                 
-                # Get latest checkin value in range (up to reference Friday)
                 if not kr_checkins.empty:
                     latest_checkin = kr_checkins.loc[kr_checkins['checkin_since_dt'].idxmax()]
                     last_friday_checkin_value = pd.to_numeric(latest_checkin.get('checkin_kr_current_value', 0), errors='coerce')
@@ -1040,248 +454,314 @@ class OKRAnalysisSystem:
             else:
                 last_friday_checkin_value = 0
             
-            # Calculate shift: current value - value as of reference Friday
             kr_shift = kr_current_value - last_friday_checkin_value
             return kr_shift
             
         except Exception as e:
             st.warning(f"Error calculating kr_shift_last_friday: {e}")
             return 0
+
+class PDFReportGenerator:
+    """Generate PDF reports for OKR analysis using matplotlib"""
     
-    def calculate_final_okr_goal_shift(self, user_df: pd.DataFrame) -> float:
-        """
-        Calculate final_okr_goal_shift using reference to previous Friday:
-        1. Group by unique combination of goal_name + kr_name
-        2. Calculate average kr_shift_last_friday for each combination
-        3. Calculate average of all combination averages
-        Always uses Friday of previous week as reference point
-        """
-        try:
-            # Get reference Friday (previous Friday)
-            reference_friday = self.get_last_friday_date()
-            
-            # Create unique combinations mapping
-            unique_combinations = {}
-            
-            # Process each row to calculate kr_shift_last_friday
-            for idx, row in user_df.iterrows():
-                goal_name = row.get('goal_name', '')
-                kr_name = row.get('kr_name', '')
-                
-                # Skip rows without goal_name or kr_name
-                if not goal_name or not kr_name:
-                    continue
-                
-                # Create unique combination key
-                combo_key = f"{goal_name}|{kr_name}"
-                
-                # Calculate kr_shift using reference Friday
-                kr_shift = self.calculate_kr_shift_last_friday(row, reference_friday)
-                
-                # Add to combinations
-                if combo_key not in unique_combinations:
-                    unique_combinations[combo_key] = []
-                unique_combinations[combo_key].append(kr_shift)
-            
-            # Calculate final_okr_friday_shift for each unique combination
-            final_okr_friday_shifts = []
-            
-            for combo_key, kr_shifts in unique_combinations.items():
-                # Calculate average kr_shift_last_friday for this combination
-                if kr_shifts:
-                    avg_kr_shift = sum(kr_shifts) / len(kr_shifts)
-                    final_okr_friday_shifts.append(avg_kr_shift)
-            
-            # Calculate final_okr_goal_shift (average of all final_okr_friday_shift)
-            if final_okr_friday_shifts:
-                final_okr_goal_shift = sum(final_okr_friday_shifts) / len(final_okr_friday_shifts)
-            else:
-                final_okr_goal_shift = 0
-            
-            return final_okr_goal_shift
-            
-        except Exception as e:
-            st.error(f"Error calculating final_okr_goal_shift: {e}")
-            return 0
-            
-    def calculate_okr_shifts_by_user(self) -> List[Dict]:
-        """Calculate OKR shifts for each user always comparing against previous Friday
-        If shift > current_value, then shift = current_value - last_friday_value"""
-        try:
-            users = self.final_df['goal_user_name'].dropna().unique()
-            user_okr_shifts = []
-    
-            # Get reference Friday for all calculations
-            reference_friday = self.get_last_friday_date()
-    
-            for user in users:
-                user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
-                
-                # Calculate final_okr_goal_shift using reference Friday
-                final_okr_goal_shift = self.calculate_final_okr_goal_shift(user_df)
-                
-                # Calculate current and last Friday values for comparison/legacy
-                current_value = self.calculate_current_value(user_df)
-                last_friday_value, kr_details = self.calculate_last_friday_value(reference_friday, user_df)
-                
-                
-                legacy_okr_shift = current_value - last_friday_value
-    
-                # NEW LOGIC: If shift > current_value, then shift = current_value - last_friday_value
-                adjusted_okr_shift = final_okr_goal_shift
-                adjustment_applied = False
-                
-                if final_okr_goal_shift > current_value:
-                    adjusted_okr_shift = current_value - last_friday_value
-                    adjustment_applied = True
-
-                # NEW LOGIC: Adjust last_friday_value if current_value < last_friday_value
-                if current_value < last_friday_value or last_friday_value != current_value - final_okr_goal_shift:
-                    last_friday_value = current_value - final_okr_goal_shift
-                
-                user_okr_shifts.append({
-                    'user_name': user,
-                    'okr_shift': adjusted_okr_shift,  # Use adjusted value
-                    'original_shift': final_okr_goal_shift,  # Keep original for reference
-                    'current_value': current_value,
-                    'last_friday_value': last_friday_value,
-                    'legacy_okr_shift': legacy_okr_shift,  # Keep old method for reference
-                    'adjustment_applied': adjustment_applied,  # Flag to show if adjustment was applied
-                    'kr_details_count': len(kr_details),
-                    'reference_friday': reference_friday.strftime('%d/%m/%Y')  # Add reference date
-                })
-    
-            # Sort by adjusted okr_shift descending
-            return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
-    
-        except Exception as e:
-            st.error(f"Error calculating OKR shifts: {e}")
-            return []
-    def analyze_checkin_behavior(self) -> Tuple[List[Dict], List[Dict]]:
-        """Analyze checkin behavior"""
-        try:
-            last_friday = self.get_last_friday_date()
-            quarter_start = self.get_quarter_start_date()
-
-            df = self.final_df.copy()
-            df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
-
-            # Filter period data
-            mask_period = (df['checkin_since_dt'] >= quarter_start) & (df['checkin_since_dt'] <= last_friday)
-            period_df = df[mask_period].copy()
-
-            # Filter all-time checkin data
-            all_time_df = df[df['checkin_id'].notna()].copy()
-
-            all_users = df['goal_user_name'].dropna().unique()
-
-            # Period analysis
-            period_checkins = self._analyze_period_checkins(period_df, all_users, df)
-            overall_checkins = self._analyze_overall_checkins(all_time_df, all_users, df)
-
-            return period_checkins, overall_checkins
-
-        except Exception as e:
-            st.error(f"Error analyzing checkin behavior: {e}")
-            return [], []
-
-    def _analyze_period_checkins(self, period_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
-        """Analyze checkins in the reference period"""
-        period_checkins = []
-
-        for user in all_users:
-            try:
-                user_period_checkins = period_df[
-                    (period_df['goal_user_name'] == user) &
-                    (period_df['checkin_name'].notna()) &
-                    (period_df['checkin_name'] != '')
-                ]['checkin_id'].nunique()
-
-                user_krs_in_period = period_df[period_df['goal_user_name'] == user]['kr_id'].nunique()
-                checkin_rate = (user_period_checkins / user_krs_in_period * 100) if user_krs_in_period > 0 else 0
-
-                user_checkin_dates = period_df[
-                    (period_df['goal_user_name'] == user) &
-                    (period_df['checkin_name'].notna()) &
-                    (period_df['checkin_name'] != '')
-                ]['checkin_since_dt'].dropna()
-
-                first_checkin_period = user_checkin_dates.min() if len(user_checkin_dates) > 0 else None
-                last_checkin_period = user_checkin_dates.max() if len(user_checkin_dates) > 0 else None
-
-                period_checkins.append({
-                    'user_name': user,
-                    'checkin_count_period': user_period_checkins,
-                    'kr_count_period': user_krs_in_period,
-                    'checkin_rate_period': checkin_rate,
-                    'first_checkin_period': first_checkin_period,
-                    'last_checkin_period': last_checkin_period,
-                    'days_between_checkins': (last_checkin_period - first_checkin_period).days if first_checkin_period and last_checkin_period else 0
-                })
-            except Exception as e:
-                st.warning(f"Error analyzing period checkins for {user}: {e}")
-                continue
-
-        return sorted(period_checkins, key=lambda x: x['checkin_count_period'], reverse=True)
-
-    def _analyze_overall_checkins(self, all_time_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
-        """Analyze overall checkin behavior"""
-        overall_checkins = []
+    def __init__(self):
+        plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'sans-serif']
+        plt.rcParams['font.size'] = 9
+        plt.rcParams['axes.unicode_minus'] = False
         
-        # Calculate last week date range
-        today = datetime.now()
-        days_since_monday = today.weekday()
-        monday_this_week = today - timedelta(days=days_since_monday)
-        monday_last_week = monday_this_week - timedelta(days=7)
-        sunday_last_week = monday_last_week + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
+                         members_with_goals_no_checkins, okr_shifts):
+        """Create comprehensive PDF report using matplotlib"""
+        
+        buffer = io.BytesIO()
+        
+        with PdfPages(buffer) as pdf:
+            self._create_title_page(pdf, selected_cycle, analyzer, members_without_goals, 
+                                  members_without_checkins, members_with_goals_no_checkins, okr_shifts)
+            self._create_charts_page(pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts)
+            self._create_tables_page(pdf, members_without_goals, members_without_checkins, okr_shifts)
+            self._create_checkin_page(pdf, analyzer)
+        
+        buffer.seek(0)
+        return buffer
     
-        # Calculate weeks in quarter for frequency calculation
-        quarter_start = self.get_quarter_start_date()
-        weeks_in_quarter = (today - quarter_start).days / 7
-        # Ensure we have at least 1 week to avoid division by zero
-        weeks_in_quarter = max(weeks_in_quarter, 1)
+    def _create_title_page(self, pdf, selected_cycle, analyzer, members_without_goals, 
+                          members_without_checkins, members_with_goals_no_checkins, okr_shifts):
+        """Create title page with summary statistics"""
+        
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
+        current_date = datetime.now().strftime("%d/%m/%Y")
+        
+        # Title section
+        y_pos = 13.2
+        ax.text(5, y_pos, 'BÁO CÁO TIẾN ĐỘ OKR & CHECKIN', 
+                fontsize=18, fontweight='bold', ha='center', color='#2c3e50')
+        
+        y_pos -= 0.5
+        ax.text(5, y_pos, f'{selected_cycle["name"]}', 
+                fontsize=14, fontweight='bold', ha='center', color='#3498db')
+        
+        y_pos -= 0.4
+        ax.text(5, y_pos, f'Ngày báo cáo: {current_date}', 
+                fontsize=11, ha='center', color='#7f8c8d')
+        
+        # Add line separator
+        y_pos -= 0.3
+        ax.plot([1, 9], [y_pos, y_pos], color='#3498db', linewidth=2)
+        
+        # Summary statistics
+        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+        members_with_goals = total_members - len(members_without_goals)
+        members_with_checkins = total_members - len(members_without_checkins)
+        
+        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+        
+        # Create summary boxes
+        y_pos -= 0.6
+        box_height = 1.2
+        box_width = 7
+        
+        summary_data = [
+            ('TỔNG QUAN', '#3498db', [
+                f'Tổng nhân viên: {total_members}',
+                f'Có OKR: {members_with_goals} ({(members_with_goals/total_members*100):.1f}%)' if total_members > 0 else 'Có OKR: 0',
+                f'Có Checkin: {members_with_checkins} ({(members_with_checkins/total_members*100):.1f}%)' if total_members > 0 else 'Có Checkin: 0'
+            ]),
+            ('PHÂN TÍCH TIẾN ĐỘ', '#27AE60', [
+                f'Nhân viên tiến bộ: {progress_users}',
+                f'Nhân viên ổn định: {stable_users}',
+                f'Nhân viên cần hỗ trợ: {issue_users}'
+            ])
+        ]
+        
+        for title, color, items in summary_data:
+            rect = patches.Rectangle((1.5, y_pos - box_height), box_width, box_height, 
+                                   linewidth=2, edgecolor=color, facecolor=color, alpha=0.1)
+            ax.add_patch(rect)
+            
+            ax.text(5, y_pos - 0.25, title, fontsize=13, fontweight='bold', 
+                   ha='center', color=color)
+            
+            for i, item in enumerate(items):
+                ax.text(2, y_pos - 0.6 - (i * 0.2), f'• {item}', fontsize=10, color='#2c3e50')
+            
+            y_pos -= 2.4
+        
+        # Key insights box
+        insights_y = y_pos - 0.2
+        rect = patches.Rectangle((1.5, insights_y - 2.2), box_width, 2.0, 
+                               linewidth=2, edgecolor='#e74c3c', facecolor='#e74c3c', alpha=0.1)
+        ax.add_patch(rect)
+        
+        ax.text(5, insights_y - 0.25, 'ĐIỂM CẦN QUAN TÂM', fontsize=13, fontweight='bold', 
+               ha='center', color='#e74c3c')
+        
+        insights = [
+            f'Nhân viên chưa có OKR: {len(members_without_goals)} người',
+            f'Nhân viên chưa checkin: {len(members_without_checkins)} người',
+            f'Có OKR nhưng chưa checkin: {len(members_with_goals_no_checkins)} người'
+        ]
+        
+        for i, insight in enumerate(insights):
+            ax.text(2, insights_y - 0.8 - (i * 0.3), f'⚠️ {insight}', fontsize=10, color='#e74c3c')
+        
+        # Footer
+        ax.text(5, 1.2, 'A Plus Mineral Material Corporation', 
+                fontsize=13, fontweight='bold', ha='center', color='#2c3e50')
+        ax.text(5, 0.8, 'Báo cáo được tạo tự động bởi hệ thống OKR Analysis', 
+                fontsize=9, ha='center', color='#7f8c8d')
+        
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
     
-        for user in all_users:
-            try:
-                user_total_checkins = all_time_df[all_time_df['goal_user_name'] == user]['checkin_id'].nunique()
-                user_total_krs = full_df[full_df['goal_user_name'] == user]['kr_id'].nunique()
-                checkin_rate = (user_total_checkins / user_total_krs * 100) if user_total_krs > 0 else 0
-    
-                user_checkins_dates = all_time_df[all_time_df['goal_user_name'] == user]['checkin_since_dt'].dropna()
-                first_checkin = user_checkins_dates.min() if len(user_checkins_dates) > 0 else None
-                last_checkin = user_checkins_dates.max() if len(user_checkins_dates) > 0 else None
-                days_active = (last_checkin - first_checkin).days if first_checkin and last_checkin else 0
-    
-                # NEW CALCULATION: Frequency = Total checkins / Weeks passed in quarter
-                checkin_frequency = user_total_checkins / weeks_in_quarter
+    def _create_charts_page(self, pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts):
+        """Create page with charts and visualizations"""
+        
+        fig = plt.figure(figsize=(8.27, 11.69))
+        fig.suptitle('BIỂU ĐỒ PHÂN TÍCH', fontsize=16, fontweight='bold', y=0.95, color='#2c3e50')
+        
+        # Chart 1: Progress Distribution
+        ax1 = plt.subplot(2, 1, 1)
+        if okr_shifts:
+            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
+            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
+            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0])
+            
+            sizes = [progress_users, stable_users, issue_users]
+            labels = ['Tiến bộ', 'Ổn định', 'Cần hỗ trợ']
+            colors = ['#27AE60', '#F39C12', '#E74C3C']
+            
+            non_zero_data = [(size, label, color) for size, label, color in zip(sizes, labels, colors) if size > 0]
+            if non_zero_data:
+                sizes, labels, colors = zip(*non_zero_data)
+                wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                                 colors=colors, startangle=90)
+                ax1.set_title('Phân bố tiến độ nhân viên', fontsize=13, fontweight='bold', pad=20)
                 
-                # Calculate checkins in last week
-                user_last_week_checkins = 0
-                if len(user_checkins_dates) > 0:
-                    last_week_checkins = user_checkins_dates[
-                        (user_checkins_dates >= monday_last_week) & 
-                        (user_checkins_dates <= sunday_last_week)
-                    ]
-                    user_last_week_checkins = len(last_week_checkins)
+                for text in texts:
+                    text.set_fontsize(11)
+                for autotext in autotexts:
+                    autotext.set_fontsize(10)
+                    autotext.set_color('white')
+                    autotext.set_weight('bold')
+        
+        # Chart 2: OKR Shifts Bar Chart
+        ax2 = plt.subplot(2, 1, 2)
+        if okr_shifts:
+            top_shifts = okr_shifts[:15]
+            names = [u['user_name'] for u in top_shifts]
+            values = [u['okr_shift'] for u in top_shifts]
+            
+            colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
+            
+            bars = ax2.bar(range(len(names)), values, color=colors)
+            ax2.set_xticks(range(len(names)))
+            ax2.set_xticklabels(names, rotation=45, ha='right', fontsize=9)
+            ax2.set_title('Dịch chuyển OKR (Top 15)', fontsize=13, fontweight='bold', pad=20)
+            ax2.set_ylabel('Dịch chuyển OKR', fontsize=10)
+            ax2.grid(True, alpha=0.3)
+            
+            for bar, value in zip(bars, values):
+                height = bar.get_height()
+                ax2.text(bar.get_x() + bar.get_width()/2., 
+                        height + (0.02 if height >= 0 else -0.08),
+                        f'{value:.2f}', ha='center', 
+                        va='bottom' if height >= 0 else 'top', fontsize=8)
+        
+        plt.tight_layout(rect=[0, 0.02, 1, 0.92])
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
     
-                overall_checkins.append({
-                    'user_name': user,
-                    'total_checkins': user_total_checkins,
-                    'total_krs': user_total_krs,
-                    'checkin_rate': checkin_rate,
-                    'first_checkin': first_checkin,
-                    'last_checkin': last_checkin,
-                    'days_active': days_active,
-                    'checkin_frequency_per_week': checkin_frequency,  # Updated calculation
-                    'last_week_checkins': user_last_week_checkins,
-                    'weeks_in_quarter': weeks_in_quarter  # Add for reference
-                })
-            except Exception as e:
-                st.warning(f"Error analyzing overall checkins for {user}: {e}")
-                continue
+    def _create_tables_page(self, pdf, members_without_goals, members_without_checkins, okr_shifts):
+        """Create page with detailed tables"""
+        
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
+        y_pos = 13.5
+        
+        ax.text(5, y_pos, 'CHI TIẾT PHÂN TÍCH', fontsize=15, fontweight='bold', 
+               ha='center', color='#2c3e50')
+        y_pos -= 0.8
+        
+        # Members without goals
+        if members_without_goals and y_pos > 6:
+            ax.text(0.5, y_pos, f'NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)', 
+                   fontsize=11, fontweight='bold', color='#e74c3c')
+            y_pos -= 0.5
+            
+            # Table header
+            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
+            ax.text(1.5, y_pos, 'Tên', fontsize=9, fontweight='bold')
+            ax.text(4, y_pos, 'Username', fontsize=9, fontweight='bold')
+            ax.text(6.5, y_pos, 'Chức vụ', fontsize=9, fontweight='bold')
+            
+            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
+            y_pos -= 0.4
+            
+            # Table rows
+            for i, member in enumerate(members_without_goals[:12], 1):
+                if y_pos < 6:
+                    break
+                ax.text(0.5, y_pos, str(i), fontsize=8)
+                ax.text(1.5, y_pos, member.get('name', '')[:18], fontsize=8)
+                ax.text(4, y_pos, member.get('username', ''), fontsize=8)
+                ax.text(6.5, y_pos, member.get('job', '')[:20], fontsize=8)
+                y_pos -= 0.3
+            
+            if len(members_without_goals) > 12:
+                ax.text(0.5, y_pos, f'... và {len(members_without_goals) - 12} nhân viên khác', 
+                       fontsize=8, style='italic', color='#7f8c8d')
+                y_pos -= 0.4
+            
+            y_pos -= 0.6
+        
+        # Top performers section
+        if okr_shifts and y_pos > 3:
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:8]
+            if top_performers:
+                ax.text(0.5, y_pos, f'TOP NHÂN VIÊN TIẾN BỘ ({len(top_performers)} người)', 
+                       fontsize=11, fontweight='bold', color='#27AE60')
+                y_pos -= 0.5
+                
+                # Table header
+                ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
+                ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
+                ax.text(4.5, y_pos, 'Dịch chuyển', fontsize=9, fontweight='bold')
+                ax.text(6.5, y_pos, 'Hiện tại', fontsize=9, fontweight='bold')
+                ax.text(8, y_pos, 'Trước đó', fontsize=9, fontweight='bold')
+                
+                ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
+                y_pos -= 0.4
+                
+                # Table rows
+                for i, user in enumerate(top_performers, 1):
+                    if y_pos < 1:
+                        break
+                    ax.text(0.5, y_pos, str(i), fontsize=8)
+                    ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)
+                    ax.text(4.5, y_pos, f"{user['okr_shift']:.2f}", fontsize=8, color='#27AE60')
+                    ax.text(6.5, y_pos, f"{user['current_value']:.2f}", fontsize=8)
+                    ax.text(8, y_pos, f"{user['last_friday_value']:.2f}", fontsize=8)
+                    y_pos -= 0.3
+        
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
     
-        return sorted(overall_checkins, key=lambda x: x['total_checkins'], reverse=True)
-
+    def _create_checkin_page(self, pdf, analyzer):
+        """Create page with checkin analysis"""
+        
+        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+        
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 14)
+        ax.axis('off')
+        
+        y_pos = 13.5
+        
+        ax.text(5, y_pos, 'PHÂN TÍCH HOẠT ĐỘNG CHECKIN', fontsize=15, fontweight='bold', 
+               ha='center', color='#2c3e50')
+        y_pos -= 1
+        
+        if overall_checkins:
+            ax.text(0.5, y_pos, f'TOP NHÂN VIÊN HOẠT ĐỘNG NHẤT ({min(len(overall_checkins), 15)} người)', 
+                   fontsize=11, fontweight='bold', color='#3498db')
+            y_pos -= 0.5
+            
+            # Table header
+            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
+            ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
+            ax.text(4.5, y_pos, 'Tổng checkin', fontsize=9, fontweight='bold')
+            ax.text(6.5, y_pos, 'Tần suất/tuần', fontsize=9, fontweight='bold')
+            ax.text(8.5, y_pos, 'Tuần trước', fontsize=9, fontweight='bold')
+            
+            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
+            y_pos -= 0.4
+            
+            # Table rows
+            for i, user in enumerate(overall_checkins[:15], 1):
+                if y_pos < 1:
+                    break
+                ax.text(0.5, y_pos, str(i), fontsize=8)
+                ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)
+                ax.text(4.5, y_pos, str(user.get('total_checkins', 0)), fontsize=8)
+                ax.text(6.5, y_pos, f"{user.get('checkin_frequency_per_week', 0):.2f}", fontsize=8)
+                ax.text(8.5, y_pos, str(user.get('last_week_checkins', 0)), fontsize=8)
+                y_pos -= 0.3
+        else:
+            ax.text(5, y_pos, 'Không có dữ liệu checkin', fontsize=11, ha='center', color='#7f8c8d')
+        
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
 
 class EmailReportGenerator:
     """Generate and send email reports for OKR analysis"""
@@ -1290,17 +770,8 @@ class EmailReportGenerator:
         self.smtp_server = smtp_server
         self.smtp_port = smtp_port
 
-    def create_chart_image(self, fig, filename="chart"):
-        """Convert plotly figure to bytes for email attachment"""
-        try:
-            img_bytes = pio.to_image(fig, format="png", width=800, height=600, scale=2)
-            return img_bytes
-        except Exception as e:
-            st.error(f"Error creating chart image: {e}")
-            return None
-
     def create_visual_html_chart(self, data, chart_type, title):
-        """Create HTML-based visual charts as fallback"""
+        """Create HTML-based visual charts"""
         if chart_type == "pie":
             total = sum(data.values())
             if total == 0:
@@ -1313,13 +784,11 @@ class EmailReportGenerator:
             """
             
             colors = ['#27AE60', '#E74C3C', '#3498DB', '#F39C12', '#9B59B6']
-            color_names = ['success', 'danger', 'info', 'warning', 'purple']
             
             for i, (label, value) in enumerate(data.items()):
                 percentage = (value / total * 100) if total > 0 else 0
                 color = colors[i % len(colors)]
                 
-                # Scale circle size based on value
                 circle_size = max(100, min(140, 100 + (value / total * 40)))
                 font_size = max(20, min(28, 20 + (value / total * 8)))
                 
@@ -1356,24 +825,21 @@ class EmailReportGenerator:
                 <div style='max-height: 500px; overflow-y: auto; padding: 10px;'>
             """
             
-            for i, (name, value) in enumerate(list(data.items())[:15]):  # Top 15
+            for i, (name, value) in enumerate(list(data.items())[:15]):
                 width_pct = (abs(value) / max_value * 100) if max_value > 0 else 0
                 
                 if value > 0:
                     color = '#27AE60'
                     bg_color = 'rgba(39, 174, 96, 0.1)'
                     icon = '📈'
-                    status = 'positive'
                 elif value < 0:
                     color = '#E74C3C'
                     bg_color = 'rgba(231, 76, 60, 0.1)'
                     icon = '📉'
-                    status = 'negative'
                 else:
                     color = '#F39C12'
                     bg_color = 'rgba(243, 156, 18, 0.1)'
                     icon = '➡️'
-                    status = 'neutral'
                 
                 html += f"""
                 <div style='margin-bottom: 20px; padding: 15px; background: {bg_color}; 
@@ -1397,304 +863,6 @@ class EmailReportGenerator:
             return html
         
         return f"<div class='modern-chart'><h3>{title}</h3><p>Loại biểu đồ không được hỗ trợ</p></div>"
-
-    def _generate_top_overall_table_html(self, overall_checkins_data):
-        """Generate HTML table for top overall checkin users"""
-        if not overall_checkins_data:
-            return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
-        
-        # Calculate quarter information
-        today = datetime.now()
-        quarter_start = datetime(today.year, ((today.month - 1) // 3) * 3 + 1, 1)
-        weeks_in_quarter = (today - quarter_start).days / 7
-        weeks_in_quarter = max(weeks_in_quarter, 1)
-        
-        # Calculate last week date range
-        days_since_monday = today.weekday()
-        monday_this_week = today - timedelta(days=days_since_monday)
-        monday_last_week = monday_this_week - timedelta(days=7)
-        sunday_last_week = monday_last_week + timedelta(days=6)
-        
-        html = f"""
-        <div class="alert alert-info">
-            <strong>📅 Tuần trước:</strong> {monday_last_week.strftime('%d/%m/%Y')} - {sunday_last_week.strftime('%d/%m/%Y')}<br>
-            <strong>📊 Tần suất checkin:</strong> Tổng checkin ÷ {weeks_in_quarter:.1f} tuần (từ đầu quý đến nay)
-        </div>
-        <table>
-            <thead>
-                <tr>
-                    <th>🏅 Hạng</th>
-                    <th>👤 Nhân viên</th>
-                    <th>📊 Tổng checkin</th>
-                    <th>⚡ Tần suất/tuần (quý)</th>
-                    <th>📅 Checkin tuần trước</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
-        
-        for i, item in enumerate(overall_checkins_data):
-            rank_icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}"
-            frequency = item.get('checkin_frequency_per_week', 0)
-            last_week = item.get('last_week_checkins', 0)
-            total = item.get('total_checkins', 0)
-            
-            # Style for high performers
-            row_style = ""
-            if i < 3:  # Top 3
-                row_style = "style='background: linear-gradient(135deg, #fff9e6, #fffbf0); font-weight: 600;'"
-            elif i % 2 == 0:
-                row_style = "style='background: #f8f9fa;'"
-            
-            # Highlight high activity
-            frequency_style = "style='color: #27AE60; font-weight: bold;'" if frequency >= 2 else ""
-            last_week_style = "style='color: #3498db; font-weight: bold;'" if last_week > 0 else "style='color: #7f8c8d;'"
-            
-            html += f"""
-            <tr {row_style}>
-                <td style='text-align: center; font-size: 16px; font-weight: bold;'>{rank_icon}</td>
-                <td><strong>{item.get('user_name', 'Unknown')}</strong></td>
-                <td style='text-align: center; font-weight: 600; color: #2c3e50;'>{total}</td>
-                <td style='text-align: center;' {frequency_style}>{frequency:.2f}</td>
-                <td style='text-align: center;' {last_week_style}>{last_week}</td>
-            </tr>
-            """
-        
-        # Add summary statistics
-        if overall_checkins_data:
-            total_checkins_sum = sum(item.get('total_checkins', 0) for item in overall_checkins_data)
-            avg_frequency = sum(item.get('checkin_frequency_per_week', 0) for item in overall_checkins_data) / len(overall_checkins_data)
-            active_last_week = len([item for item in overall_checkins_data if item.get('last_week_checkins', 0) > 0])
-            
-            html += f"""
-            <tr style='background: linear-gradient(135deg, #e8f4f8, #f0f8ff); border-top: 2px solid #3498db; font-weight: bold;'>
-                <td colspan="2" style='text-align: center; color: #2c3e50;'>📊 TỔNG KẾT TOP {len(overall_checkins_data)}</td>
-                <td style='text-align: center; color: #3498db;'>{total_checkins_sum}</td>
-                <td style='text-align: center; color: #27AE60;'>{avg_frequency:.2f}</td>
-                <td style='text-align: center; color: #e74c3c;'>{active_last_week} người</td>
-            </tr>
-            """
-        
-        html += "</tbody></table>"
-        return html
-    
-    def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                               members_with_goals_no_checkins, okr_shifts):
-            """Create HTML email content with fallback charts including top_overall table"""
-            
-            current_date = datetime.now().strftime("%d/%m/%Y")
-            total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-            
-            # Calculate statistics
-            members_with_goals = total_members - len(members_without_goals)
-            members_with_checkins = total_members - len(members_without_checkins)
-            
-            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
-            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
-            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
-            
-            # Get checkin behavior analysis data for top_overall table
-            period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
-            
-            # Create visual charts
-            goal_chart = self.create_visual_html_chart(
-                {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
-                'pie', 'Phân bố trạng thái OKR'
-            )
-            
-            # Create checkin table instead of chart
-            checkins_table = self._generate_table_html(members_without_checkins,
-                                                     ["Tên", "Username", "Chức vụ", "Có OKR"],
-                                                     ["name", "username", "job", "has_goal"])
-            
-            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
-            okr_shifts_chart = self.create_visual_html_chart(
-                okr_shifts_data, 'bar', 'Dịch chuyển OKR của nhân viên (Top 15)'
-            )
-            
-            # Generate tables
-            goals_table = self._generate_table_html(members_without_goals, 
-                                                   ["Tên", "Username", "Chức vụ"], 
-                                                   ["name", "username", "job"])
-            
-            goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
-                                                              ["Tên", "Username", "Chức vụ"],
-                                                              ["name", "username", "job"])
-            
-            # Top performers table
-            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
-            top_performers_table = self._generate_okr_table_html(top_performers)
-            
-            # Issue users table
-            issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
-            issue_performers_table = self._generate_okr_table_html(issue_performers)
-            
-            # NEW: Generate top_overall table
-            top_overall_table = self._generate_top_overall_table_html(overall_checkins[:20] if overall_checkins else [])
-            
-            html_content = f"""
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
-                    .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
-                    .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
-                    .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
-                    .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
-                    .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
-                    .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
-                    .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
-                    .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
-                    .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
-                    .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
-                    table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-                    th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
-                    td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
-                    tr:nth-child(even) {{ background: #f8f9fa; }}
-                    tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
-                    .chart-container {{ text-align: center; margin: 30px 0; }}
-                    .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
-                    .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
-                    .positive {{ color: #27AE60; font-weight: bold; }}
-                    .negative {{ color: #E74C3C; font-weight: bold; }}
-                    .neutral {{ color: #F39C12; font-weight: bold; }}
-                    .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
-                    .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
-                    .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
-                    .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
-                    .alert strong {{ font-weight: 600; }}
-                    @media (max-width: 768px) {{
-                        .metrics {{ flex-direction: column; }}
-                        .modern-chart {{ padding: 20px; }}
-                        .section {{ padding: 20px; }}
-                        table {{ font-size: 12px; }}
-                        th, td {{ padding: 10px 8px; }}
-                    }}
-                </style>
-            </head>
-            <body>
-                <div class="header">
-                    <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
-                    <h2>{selected_cycle['name']}</h2>
-                    <p>Ngày báo cáo: {current_date}</p>
-                </div>
-                
-                <div class="section">
-                    <h2>📈 TỔNG QUAN</h2>
-                    <div class="metrics">
-                        <div class="metric">
-                            <div class="metric-value">{total_members}</div>
-                            <div class="metric-label">Tổng nhân viên</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">{members_with_goals}</div>
-                            <div class="metric-label">Có OKR</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">{members_with_checkins}</div>
-                            <div class="metric-label">Có Checkin</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value">{progress_users}</div>
-                            <div class="metric-label">Tiến bộ</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="section">
-                    <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
-                    <div class="chart-container">
-                        {checkins_table}
-                    </div>
-                    <div class="alert alert-info">
-                        <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
-                    </div>
-                </div>
-                
-                <div class="section">
-                    <h2>📊 DỊCH CHUYỂN OKR</h2>
-                    <div class="chart-container">
-                        {okr_shifts_chart}
-                    </div>
-                    <div class="metrics">
-                        <div class="metric">
-                            <div class="metric-value positive">{progress_users}</div>
-                            <div class="metric-label">Tiến bộ</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value neutral">{stable_users}</div>
-                            <div class="metric-label">Ổn định</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-value negative">{issue_users}</div>
-                            <div class="metric-label">Cần quan tâm</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="section">
-                    <h2>🏆 TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN NHIỀU NHẤT</h2>
-                    <div class="alert alert-info">
-                        <strong>Thống kê:</strong> Xếp hạng dựa trên tổng số checkin và tần suất checkin từ đầu quý
-                    </div>
-                    {top_overall_table}
-                </div>
-            """
-            
-            # Add detailed tables
-            if members_without_goals:
-                html_content += f"""
-                <div class="section">
-                    <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
-                    <div class="alert alert-warning">
-                        <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
-                    </div>
-                    {goals_table}
-                </div>
-                """
-            
-            if members_with_goals_no_checkins:
-                html_content += f"""
-                <div class="section">
-                    <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
-                    <div class="alert alert-warning">
-                        <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
-                    </div>
-                    {goals_no_checkins_table}
-                </div>
-                """
-            
-            if top_performers:
-                html_content += f"""
-                <div class="section">
-                    <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT</h2>
-                    {top_performers_table}
-                </div>
-                """
-            
-            if issue_performers:
-                html_content += f"""
-                <div class="section">
-                    <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ</h2>
-                    <div class="alert alert-warning">
-                        <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
-                    </div>
-                    {issue_performers_table}
-                </div>
-                """
-            
-            html_content += """
-                <div class="footer">
-                    <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
-                    <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
-                    <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
-                </div>
-            </body>
-            </html>
-            """
-            
-            return html_content
 
     def _generate_table_html(self, data, headers, fields):
         """Generate HTML table from data"""
@@ -1754,30 +922,314 @@ class EmailReportGenerator:
         html += "</tbody></table>"
         return html
 
+    def _generate_top_overall_table_html(self, overall_checkins_data):
+        """Generate HTML table for top overall checkin users"""
+        if not overall_checkins_data:
+            return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
+        
+        today = datetime.now()
+        quarter_start = datetime(today.year, ((today.month - 1) // 3) * 3 + 1, 1)
+        weeks_in_quarter = (today - quarter_start).days / 7
+        weeks_in_quarter = max(weeks_in_quarter, 1)
+        
+        days_since_monday = today.weekday()
+        monday_this_week = today - timedelta(days=days_since_monday)
+        monday_last_week = monday_this_week - timedelta(days=7)
+        sunday_last_week = monday_last_week + timedelta(days=6)
+        
+        html = f"""
+        <div class="alert alert-info">
+            <strong>📅 Tuần trước:</strong> {monday_last_week.strftime('%d/%m/%Y')} - {sunday_last_week.strftime('%d/%m/%Y')}<br>
+            <strong>📊 Tần suất checkin:</strong> Tổng checkin ÷ {weeks_in_quarter:.1f} tuần (từ đầu quý đến nay)
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>🏅 Hạng</th>
+                    <th>👤 Nhân viên</th>
+                    <th>📊 Tổng checkin</th>
+                    <th>⚡ Tần suất/tuần (quý)</th>
+                    <th>📅 Checkin tuần trước</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+        
+        for i, item in enumerate(overall_checkins_data):
+            rank_icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"{i+1}"
+            frequency = item.get('checkin_frequency_per_week', 0)
+            last_week = item.get('last_week_checkins', 0)
+            total = item.get('total_checkins', 0)
+            
+            row_style = ""
+            if i < 3:
+                row_style = "style='background: linear-gradient(135deg, #fff9e6, #fffbf0); font-weight: 600;'"
+            elif i % 2 == 0:
+                row_style = "style='background: #f8f9fa;'"
+            
+            frequency_style = "style='color: #27AE60; font-weight: bold;'" if frequency >= 2 else ""
+            last_week_style = "style='color: #3498db; font-weight: bold;'" if last_week > 0 else "style='color: #7f8c8d;'"
+            
+            html += f"""
+            <tr {row_style}>
+                <td style='text-align: center; font-size: 16px; font-weight: bold;'>{rank_icon}</td>
+                <td><strong>{item.get('user_name', 'Unknown')}</strong></td>
+                <td style='text-align: center; font-weight: 600; color: #2c3e50;'>{total}</td>
+                <td style='text-align: center;' {frequency_style}>{frequency:.2f}</td>
+                <td style='text-align: center;' {last_week_style}>{last_week}</td>
+            </tr>
+            """
+        
+        if overall_checkins_data:
+            total_checkins_sum = sum(item.get('total_checkins', 0) for item in overall_checkins_data)
+            avg_frequency = sum(item.get('checkin_frequency_per_week', 0) for item in overall_checkins_data) / len(overall_checkins_data)
+            active_last_week = len([item for item in overall_checkins_data if item.get('last_week_checkins', 0) > 0])
+            
+            html += f"""
+            <tr style='background: linear-gradient(135deg, #e8f4f8, #f0f8ff); border-top: 2px solid #3498db; font-weight: bold;'>
+                <td colspan="2" style='text-align: center; color: #2c3e50;'>📊 TỔNG KẾT TOP {len(overall_checkins_data)}</td>
+                <td style='text-align: center; color: #3498db;'>{total_checkins_sum}</td>
+                <td style='text-align: center; color: #27AE60;'>{avg_frequency:.2f}</td>
+                <td style='text-align: center; color: #e74c3c;'>{active_last_week} người</td>
+            </tr>
+            """
+        
+        html += "</tbody></table>"
+        return html
+
+    def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
+                           members_with_goals_no_checkins, okr_shifts):
+        """Create HTML email content with fallback charts"""
+        
+        current_date = datetime.now().strftime("%d/%m/%Y")
+        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
+        
+        # Calculate statistics
+        members_with_goals = total_members - len(members_without_goals)
+        members_with_checkins = total_members - len(members_without_checkins)
+        
+        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
+        
+        # Get checkin behavior analysis data
+        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+        
+        # Create visual charts
+        goal_chart = self.create_visual_html_chart(
+            {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
+            'pie', 'Phân bố trạng thái OKR'
+        )
+        
+        checkins_table = self._generate_table_html(members_without_checkins,
+                                                 ["Tên", "Username", "Chức vụ", "Có OKR"],
+                                                 ["name", "username", "job", "has_goal"])
+        
+        okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
+        okr_shifts_chart = self.create_visual_html_chart(
+            okr_shifts_data, 'bar', 'Dịch chuyển OKR của nhân viên (Top 15)'
+        )
+        
+        # Generate tables
+        goals_table = self._generate_table_html(members_without_goals, 
+                                               ["Tên", "Username", "Chức vụ"], 
+                                               ["name", "username", "job"])
+        
+        goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
+                                                          ["Tên", "Username", "Chức vụ"],
+                                                          ["name", "username", "job"])
+        
+        top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
+        top_performers_table = self._generate_okr_table_html(top_performers)
+        
+        issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
+        issue_performers_table = self._generate_okr_table_html(issue_performers)
+        
+        top_overall_table = self._generate_top_overall_table_html(overall_checkins[:20] if overall_checkins else [])
+        
+        html_content = f"""
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
+                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
+                .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
+                .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
+                .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
+                .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
+                .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
+                .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
+                .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
+                .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
+                .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
+                table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
+                th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
+                td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
+                tr:nth-child(even) {{ background: #f8f9fa; }}
+                tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
+                .chart-container {{ text-align: center; margin: 30px 0; }}
+                .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
+                .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
+                .positive {{ color: #27AE60; font-weight: bold; }}
+                .negative {{ color: #E74C3C; font-weight: bold; }}
+                .neutral {{ color: #F39C12; font-weight: bold; }}
+                .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
+                .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
+                .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
+                .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
+                .alert strong {{ font-weight: 600; }}
+                @media (max-width: 768px) {{
+                    .metrics {{ flex-direction: column; }}
+                    .modern-chart {{ padding: 20px; }}
+                    .section {{ padding: 20px; }}
+                    table {{ font-size: 12px; }}
+                    th, td {{ padding: 10px 8px; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
+                <h2>{selected_cycle['name']}</h2>
+                <p>Ngày báo cáo: {current_date}</p>
+            </div>
+            
+            <div class="section">
+                <h2>📈 TỔNG QUAN</h2>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value">{total_members}</div>
+                        <div class="metric-label">Tổng nhân viên</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">{members_with_goals}</div>
+                        <div class="metric-label">Có OKR</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">{members_with_checkins}</div>
+                        <div class="metric-label">Có Checkin</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">{progress_users}</div>
+                        <div class="metric-label">Tiến bộ</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
+                <div class="chart-container">
+                    {checkins_table}
+                </div>
+                <div class="alert alert-info">
+                    <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📊 DỊCH CHUYỂN OKR</h2>
+                <div class="chart-container">
+                    {okr_shifts_chart}
+                </div>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value positive">{progress_users}</div>
+                        <div class="metric-label">Tiến bộ</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value neutral">{stable_users}</div>
+                        <div class="metric-label">Ổn định</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value negative">{issue_users}</div>
+                        <div class="metric-label">Cần quan tâm</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>🏆 TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN NHIỀU NHẤT</h2>
+                <div class="alert alert-info">
+                    <strong>Thống kê:</strong> Xếp hạng dựa trên tổng số checkin và tần suất checkin từ đầu quý
+                </div>
+                {top_overall_table}
+            </div>
+        """
+        
+        # Add detailed tables
+        if members_without_goals:
+            html_content += f"""
+            <div class="section">
+                <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
+                <div class="alert alert-warning">
+                    <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
+                </div>
+                {goals_table}
+            </div>
+            """
+        
+        if members_with_goals_no_checkins:
+            html_content += f"""
+            <div class="section">
+                <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
+                <div class="alert alert-warning">
+                    <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
+                </div>
+                {goals_no_checkins_table}
+            </div>
+            """
+        
+        if top_performers:
+            html_content += f"""
+            <div class="section">
+                <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT</h2>
+                {top_performers_table}
+            </div>
+            """
+        
+        if issue_performers:
+            html_content += f"""
+            <div class="section">
+                <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ</h2>
+                <div class="alert alert-warning">
+                    <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
+                </div>
+                {issue_performers_table}
+            </div>
+            """
+        
+        html_content += """
+            <div class="footer">
+                <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
+                <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
+                <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html_content
+
     def send_email_report(self, email_from, password, email_to, subject, html_content, 
                          company_name="A Plus Mineral Material Corporation"):
         """Send email report with improved compatibility"""
         try:
-            # Create message
-            message = MIMEMultipart('related')  # Changed to 'related' for better image support
+            message = MIMEMultipart('related')
             message['From'] = f"OKR System {company_name} <{email_from}>"
             message['To'] = email_to
             message['Subject'] = subject
             
-            # Create message container
             msg_alternative = MIMEMultipart('alternative')
             message.attach(msg_alternative)
             
-            # Add HTML content
             html_part = MIMEText(html_content, 'html', 'utf-8')
             msg_alternative.attach(html_part)
             
-            # Connect to SMTP server
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
             server.starttls()
             server.login(email_from, password)
             
-            # Send email
             server.send_message(message)
             server.quit()
             
@@ -1792,29 +1244,23 @@ class EmailReportGenerator:
                                   pdf_buffer, company_name="A Plus Mineral Material Corporation"):
         """Send email report with PDF attachment"""
         try:
-            # Create message
-            message = MIMEMultipart('mixed')  # Changed to 'mixed' for attachments
+            message = MIMEMultipart('mixed')
             message['From'] = f"OKR System {company_name} <{email_from}>"
             message['To'] = email_to
             message['Subject'] = subject
             
-            # Create message container for HTML
             msg_alternative = MIMEMultipart('alternative')
             
-            # Add HTML content
             html_part = MIMEText(html_content, 'html', 'utf-8')
             msg_alternative.attach(html_part)
             
-            # Attach HTML part to main message
             message.attach(msg_alternative)
             
-            # Add PDF attachment
             if pdf_buffer:
                 pdf_attachment = MIMEBase('application', 'pdf')
                 pdf_attachment.set_payload(pdf_buffer.getvalue())
                 encoders.encode_base64(pdf_attachment)
                 
-                # Generate filename with current date
                 pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
                 pdf_attachment.add_header(
                     'Content-Disposition',
@@ -1822,12 +1268,10 @@ class EmailReportGenerator:
                 )
                 message.attach(pdf_attachment)
             
-            # Connect to SMTP server
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
             server.starttls()
             server.login(email_from, password)
             
-            # Send email
             server.send_message(message)
             server.quit()
             
@@ -1838,314 +1282,350 @@ class EmailReportGenerator:
         except Exception as e:
             return False, f"Lỗi gửi email: {str(e)}"
 
+class OKRAnalysisSystem:
+    """Main OKR Analysis System combining all components"""
 
+    def __init__(self, goal_access_token: str, account_access_token: str):
+        self.api_client = APIClient(goal_access_token, account_access_token)
+        self.data_processor = DataProcessor()
+        self.okr_calculator = OKRCalculator()
+        self.checkin_path = None
+        self.final_df = None
+        self.filtered_members_df = None
 
+    def get_filtered_members(self) -> pd.DataFrame:
+        """Get filtered members from account API"""
+        self.filtered_members_df = self.api_client.get_filtered_members()
+        return self.filtered_members_df
 
-# ==================== STREAMLIT APP ====================
+    def get_cycle_list(self) -> List[Dict]:
+        """Get list of quarterly cycles"""
+        return self.api_client.get_cycle_list()
 
-def main():
-    st.title("🎯 OKR & Checkin Analysis Dashboard")
-    st.markdown("---")
-
-    # Get API tokens from environment variables
-    goal_token = os.getenv("GOAL_ACCESS_TOKEN")
-    account_token = os.getenv("ACCOUNT_ACCESS_TOKEN")
-
-    # Check if tokens are available
-    if not goal_token or not account_token:
-        st.error("❌ API tokens not found in environment variables. Please set GOAL_ACCESS_TOKEN and ACCOUNT_ACCESS_TOKEN.")
-        st.info("Make sure to set the following environment variables:")
-        st.code("""
-GOAL_ACCESS_TOKEN=your_goal_token_here
-ACCOUNT_ACCESS_TOKEN=your_account_token_here
-        """)
-        return
-
-    # Initialize analyzer
-    try:
-        analyzer = OKRAnalysisSystem(goal_token, account_token)
-        email_generator = EmailReportGenerator()
-    except Exception as e:
-        st.error(f"Failed to initialize analyzer: {e}")
-        return
-
-    # Sidebar for configuration
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        # Show token status
-        st.subheader("🔑 API Token Status")
-        st.success("✅ Goal Access Token: Loaded")
-        st.success("✅ Account Access Token: Loaded")
-
-    # Get cycles
-    with st.spinner("🔄 Loading available cycles..."):
-        cycles = analyzer.get_cycle_list()
-
-    if not cycles:
-        st.error("❌ Could not load cycles. Please check your API tokens and connection.")
-        return
-
-    # Cycle selection
-    with st.sidebar:
-        st.subheader("📅 Cycle Selection")
-        cycle_options = {f"{cycle['name']} ({cycle['formatted_start_time']})": cycle for cycle in cycles}
-        selected_cycle_name = st.selectbox(
-            "Select Cycle",
-            options=list(cycle_options.keys()),
-            index=0,  # Default to first (latest) cycle
-            help="Choose the quarterly cycle to analyze"
-        )
-        
-        selected_cycle = cycle_options[selected_cycle_name]
-        analyzer.checkin_path = selected_cycle['path']
-        
-        st.info(f"🎯 **Selected Cycle:**\n\n**{selected_cycle['name']}**\n\nPath: `{selected_cycle['path']}`\n\nStart: {selected_cycle['formatted_start_time']}")
-
-    # Analysis options
-    with st.sidebar:
-        st.subheader("📊 Analysis Options")
-        show_missing_analysis = st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
-
-    # Email configuration
-    with st.sidebar:
-        st.subheader("📧 Email Report Settings")
-        
-        # Pre-configured email settings
-        email_from = "apluscorp.hr@gmail.com"
-        email_password = 'mems nctq yxss gruw'  # App password
-        email_to = "xnk3@apluscorp.vn"
-        
-        st.info("📧 Email settings are pre-configured")
-        st.text(f"From: {email_from}")
-        st.text(f"To: {email_to}")
-        
-        # Option to override email recipient
-        custom_email = st.text_input("Custom recipient (optional):", placeholder="email@example.com")
-        if custom_email.strip():
-            email_to = custom_email.strip()
-
-    # Main analysis
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
-    
-    with col2:
-        email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
-
-    run_analysis(analyzer, selected_cycle, show_missing_analysis)
-
-    # Send email report
-    if email_button:
-        send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
-
-def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
-    """Send email report with analysis results"""
-    
-    st.header("📧 Sending Email Report")
-    
-    # Progress tracking
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    def update_progress(message, progress):
-        status_text.text(message)
-        progress_bar.progress(progress)
-    
-    try:
-        # Load and process data
-        update_progress("Loading data for email report...", 0.1)
-        df = analyzer.load_and_process_data(update_progress)
-        
-        if df is None or df.empty:
-            st.error("❌ Failed to load data for email report")
-            return
-        
-        update_progress("Analyzing missing goals and checkins...", 0.4)
-        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
-        
-        update_progress("Calculating OKR shifts...", 0.6)
-        okr_shifts = analyzer.calculate_okr_shifts_by_user()
-        
-        update_progress("Creating email content...", 0.8)
-        html_content = email_generator.create_email_content(
-            analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
-        )
-        
-        update_progress("Sending email...", 0.9)
-        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
-        
-        success, message = email_generator.send_email_report(
-            email_from, email_password, email_to, subject, html_content
-        )
-        
-        progress_bar.empty()
-        status_text.empty()
-        
-        if success:
-            st.success(f"✅ {message}")
-            st.info(f"📧 Email report sent to: {email_to}")
+    def load_and_process_data(self, progress_callback=None):
+        """Main function to load and process all data"""
+        try:
+            if progress_callback:
+                progress_callback("Loading filtered members...", 0.05)
             
-            # Show email preview
-            if st.checkbox("📋 Show email preview", value=False):
-                st.subheader("Email Preview")
-                st.components.v1.html(html_content, height=800, scrolling=True)
-        else:
-            st.error(f"❌ {message}")
-            
-    except Exception as e:
-        progress_bar.empty()
-        status_text.empty()
-        st.error(f"❌ Error sending email report: {e}")
+            filtered_members = self.get_filtered_members()
+            if filtered_members.empty:
+                st.error("Failed to load filtered members data")
+                return None
 
-def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
-    """Send email report with PDF attachment"""
-    
-    st.header("📧 Sending Email Report with PDF")
-    
-    # Progress tracking
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    def update_progress(message, progress):
-        status_text.text(message)
-        progress_bar.progress(progress)
-    
-    try:
-        # Load and process data
-        update_progress("Loading data for email report...", 0.1)
-        df = analyzer.load_and_process_data(update_progress)
-        
-        if df is None or df.empty:
-            st.error("❌ Failed to load data for email report")
-            return
-        
-        update_progress("Analyzing missing goals and checkins...", 0.3)
-        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
-        
-        update_progress("Calculating OKR shifts...", 0.5)
-        okr_shifts = analyzer.calculate_okr_shifts_by_user()
-        
-        update_progress("Creating PDF report...", 0.7)
-        # Create PDF report
-        pdf_generator = PDFReportGenerator()
-        pdf_buffer = pdf_generator.create_pdf_report(
-            analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
-        )
-        
-        update_progress("Creating email content...", 0.8)
-        html_content = email_generator.create_email_content(
-            analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
-        )
-        
-        update_progress("Sending email with PDF attachment...", 0.9)
-        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
-        
-        # Use the existing email generator with PDF capability (FIXED LINE)
-        success, message = email_generator.send_email_with_pdf_report(
-            email_from, email_password, email_to, subject, html_content, pdf_buffer
-        )
-        
-        progress_bar.empty()
-        status_text.empty()
-        
-        if success:
-            st.success(f"✅ {message}")
-            st.info(f"📧 Email report with PDF attachment sent to: {email_to}")
+            if progress_callback:
+                progress_callback("Loading users...", 0.1)
             
-            # Show email preview and PDF download option
-            col1, col2 = st.columns(2)
+            users_df = self.api_client.get_account_users()
+            if users_df.empty:
+                st.error("Failed to load users data")
+                return None
             
-            with col1:
-                if st.checkbox("📋 Show email preview", value=False):
-                    st.subheader("Email Preview")
-                    st.components.v1.html(html_content, height=600, scrolling=True)
-            
-            with col2:
-                if pdf_buffer:
-                    pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                    st.download_button(
-                        label="📥 Download PDF Report",
-                        data=pdf_buffer.getvalue(),
-                        file_name=pdf_filename,
-                        mime="application/pdf",
-                        key="download_pdf_report"
-                    )
-        else:
-            st.error(f"❌ {message}")
-            
-    except Exception as e:
-        progress_bar.empty()
-        status_text.empty()
-        st.error(f"❌ Error sending email report: {e}")
+            user_id_to_name = dict(zip(users_df['id'], users_df['name']))
 
-def run_analysis(analyzer, selected_cycle, show_missing_analysis):
-    """Run the main analysis"""
-    
-    st.header(f"📊 Analysis Results for {selected_cycle['name']}")
-    
-    # Progress tracking
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    def update_progress(message, progress):
-        status_text.text(message)
-        progress_bar.progress(progress)
-    
-    # Load data
-    try:
-        df = analyzer.load_and_process_data(update_progress)
-        
-        if df is None or df.empty:
-            st.error("❌ Failed to load data. Please check your API tokens and try again.")
-            return
+            if progress_callback:
+                progress_callback("Loading goals...", 0.2)
             
-        progress_bar.empty()
-        status_text.empty()
+            goals_df = self.api_client.get_goals_data(self.checkin_path)
+            if goals_df.empty:
+                st.error("Failed to load goals data")
+                return None
+
+            if progress_callback:
+                progress_callback("Loading KRs...", 0.4)
+            
+            krs_df = self.api_client.get_krs_data(self.checkin_path)
+
+            if progress_callback:
+                progress_callback("Loading checkins...", 0.6)
+            
+            all_checkins = self.api_client.get_all_checkins(self.checkin_path)
+            checkin_df = self.data_processor.extract_checkin_data(all_checkins)
+
+            if progress_callback:
+                progress_callback("Processing data...", 0.8)
+
+            # Join all data
+            joined_df = goals_df.merge(krs_df, on='goal_id', how='left')
+            joined_df['goal_user_name'] = joined_df['goal_user_id'].map(user_id_to_name)
+            self.final_df = joined_df.merge(checkin_df, on='kr_id', how='left')
+
+            # Clean data
+            self.final_df = self.data_processor.clean_final_data(self.final_df)
+
+            if progress_callback:
+                progress_callback("Data processing completed!", 1.0)
+
+            return self.final_df
+
+        except Exception as e:
+            st.error(f"Error in data processing: {e}")
+            return None
+
+    def analyze_missing_goals_and_checkins(self) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+        """Analyze members without goals and without checkins"""
+        try:
+            if self.filtered_members_df is None or self.final_df is None:
+                return [], [], []
+
+            users_with_goals = set(self.final_df['goal_user_name'].dropna().unique())
+            
+            users_with_checkins = set()
+            if 'checkin_user_id' in self.final_df.columns:
+                user_id_to_name = dict(zip(self.filtered_members_df['id'], self.filtered_members_df['name']))
+                checkin_user_ids = self.final_df['checkin_user_id'].dropna().unique()
+                users_with_checkins = {user_id_to_name.get(uid, uid) for uid in checkin_user_ids if uid in user_id_to_name}
+            
+            all_members = set(self.filtered_members_df['name'].unique())
+            
+            members_without_goals = []
+            members_without_checkins = []
+            members_with_goals_no_checkins = []
+            
+            for member_name in all_members:
+                member_info = self.filtered_members_df[self.filtered_members_df['name'] == member_name].iloc[0].to_dict()
+                
+                has_goal = member_name in users_with_goals
+                has_checkin = member_name in users_with_checkins
+                
+                if not has_goal:
+                    members_without_goals.append({
+                        'name': member_name,
+                        'username': member_info.get('username', ''),
+                        'job': member_info.get('job', ''),
+                        'email': member_info.get('email', ''),
+                        'id': member_info.get('id', '')
+                    })
+                
+                if not has_checkin:
+                    members_without_checkins.append({
+                        'name': member_name,
+                        'username': member_info.get('username', ''),
+                        'job': member_info.get('job', ''),
+                        'email': member_info.get('email', ''),
+                        'id': member_info.get('id', ''),
+                        'has_goal': has_goal
+                    })
+                
+                if has_goal and not has_checkin:
+                    members_with_goals_no_checkins.append({
+                        'name': member_name,
+                        'username': member_info.get('username', ''),
+                        'job': member_info.get('job', ''),
+                        'email': member_info.get('email', ''),
+                        'id': member_info.get('id', '')
+                    })
+            
+            return members_without_goals, members_without_checkins, members_with_goals_no_checkins
+            
+        except Exception as e:
+            st.error(f"Error analyzing missing goals and checkins: {e}")
+            return [], [], []
+
+    def calculate_final_okr_goal_shift(self, user_df: pd.DataFrame) -> float:
+        """Calculate final_okr_goal_shift using reference to previous Friday"""
+        try:
+            reference_friday = DateUtils.get_last_friday_date()
+            
+            unique_combinations = {}
+            
+            for idx, row in user_df.iterrows():
+                goal_name = row.get('goal_name', '')
+                kr_name = row.get('kr_name', '')
+                
+                if not goal_name or not kr_name:
+                    continue
+                
+                combo_key = f"{goal_name}|{kr_name}"
+                
+                kr_shift = self.okr_calculator.calculate_kr_shift_last_friday(row, reference_friday, self.final_df)
+                
+                if combo_key not in unique_combinations:
+                    unique_combinations[combo_key] = []
+                unique_combinations[combo_key].append(kr_shift)
+            
+            final_okr_friday_shifts = []
+            
+            for combo_key, kr_shifts in unique_combinations.items():
+                if kr_shifts:
+                    avg_kr_shift = sum(kr_shifts) / len(kr_shifts)
+                    final_okr_friday_shifts.append(avg_kr_shift)
+            
+            if final_okr_friday_shifts:
+                final_okr_goal_shift = sum(final_okr_friday_shifts) / len(final_okr_friday_shifts)
+            else:
+                final_okr_goal_shift = 0
+            
+            return final_okr_goal_shift
+            
+        except Exception as e:
+            st.error(f"Error calculating final_okr_goal_shift: {e}")
+            return 0
+
+    def calculate_okr_shifts_by_user(self) -> List[Dict]:
+        """Calculate OKR shifts for each user"""
+        try:
+            users = self.final_df['goal_user_name'].dropna().unique()
+            user_okr_shifts = []
+    
+            reference_friday = DateUtils.get_last_friday_date()
+    
+            for user in users:
+                user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
+                
+                final_okr_goal_shift = self.calculate_final_okr_goal_shift(user_df)
+                
+                current_value = self.okr_calculator.calculate_current_value(user_df)
+                last_friday_value, kr_details = self.okr_calculator.calculate_last_friday_value(reference_friday, user_df)
+                
+                legacy_okr_shift = current_value - last_friday_value
+    
+                adjusted_okr_shift = final_okr_goal_shift
+                adjustment_applied = False
+                
+                if final_okr_goal_shift > current_value:
+                    adjusted_okr_shift = current_value - last_friday_value
+                    adjustment_applied = True
+
+                if current_value < last_friday_value or last_friday_value != current_value - final_okr_goal_shift:
+                    last_friday_value = current_value - final_okr_goal_shift
+                
+                user_okr_shifts.append({
+                    'user_name': user,
+                    'okr_shift': adjusted_okr_shift,
+                    'original_shift': final_okr_goal_shift,
+                    'current_value': current_value,
+                    'last_friday_value': last_friday_value,
+                    'legacy_okr_shift': legacy_okr_shift,
+                    'adjustment_applied': adjustment_applied,
+                    'kr_details_count': len(kr_details),
+                    'reference_friday': reference_friday.strftime('%d/%m/%Y')
+                })
+    
+            return sorted(user_okr_shifts, key=lambda x: x['okr_shift'], reverse=True)
+    
+        except Exception as e:
+            st.error(f"Error calculating OKR shifts: {e}")
+            return []
+
+    def analyze_checkin_behavior(self) -> Tuple[List[Dict], List[Dict]]:
+        """Analyze checkin behavior"""
+        try:
+            last_friday = DateUtils.get_last_friday_date()
+            quarter_start = DateUtils.get_quarter_start_date()
+
+            df = self.final_df.copy()
+            df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
+
+            mask_period = (df['checkin_since_dt'] >= quarter_start) & (df['checkin_since_dt'] <= last_friday)
+            period_df = df[mask_period].copy()
+
+            all_time_df = df[df['checkin_id'].notna()].copy()
+
+            all_users = df['goal_user_name'].dropna().unique()
+
+            period_checkins = self._analyze_period_checkins(period_df, all_users, df)
+            overall_checkins = self._analyze_overall_checkins(all_time_df, all_users, df)
+
+            return period_checkins, overall_checkins
+
+        except Exception as e:
+            st.error(f"Error analyzing checkin behavior: {e}")
+            return [], []
+
+    def _analyze_period_checkins(self, period_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
+        """Analyze checkins in the reference period"""
+        period_checkins = []
+
+        for user in all_users:
+            try:
+                user_period_checkins = period_df[
+                    (period_df['goal_user_name'] == user) &
+                    (period_df['checkin_name'].notna()) &
+                    (period_df['checkin_name'] != '')
+                ]['checkin_id'].nunique()
+
+                user_krs_in_period = period_df[period_df['goal_user_name'] == user]['kr_id'].nunique()
+                checkin_rate = (user_period_checkins / user_krs_in_period * 100) if user_krs_in_period > 0 else 0
+
+                user_checkin_dates = period_df[
+                    (period_df['goal_user_name'] == user) &
+                    (period_df['checkin_name'].notna()) &
+                    (period_df['checkin_name'] != '')
+                ]['checkin_since_dt'].dropna()
+
+                first_checkin_period = user_checkin_dates.min() if len(user_checkin_dates) > 0 else None
+                last_checkin_period = user_checkin_dates.max() if len(user_checkin_dates) > 0 else None
+
+                period_checkins.append({
+                    'user_name': user,
+                    'checkin_count_period': user_period_checkins,
+                    'kr_count_period': user_krs_in_period,
+                    'checkin_rate_period': checkin_rate,
+                    'first_checkin_period': first_checkin_period,
+                    'last_checkin_period': last_checkin_period,
+                    'days_between_checkins': (last_checkin_period - first_checkin_period).days if first_checkin_period and last_checkin_period else 0
+                })
+            except Exception as e:
+                st.warning(f"Error analyzing period checkins for {user}: {e}")
+                continue
+
+        return sorted(period_checkins, key=lambda x: x['checkin_count_period'], reverse=True)
+
+    def _analyze_overall_checkins(self, all_time_df: pd.DataFrame, all_users: List[str], full_df: pd.DataFrame) -> List[Dict]:
+        """Analyze overall checkin behavior"""
+        overall_checkins = []
         
-        # Show data summary
-        show_data_summary(df, analyzer)
-        
-        # Show missing goals and checkins analysis if enabled
-        if show_missing_analysis:
-            st.subheader("🚨 Missing Goals & Checkins Analysis")
-            with st.spinner("Analyzing missing goals and checkins..."):
-                show_missing_analysis_section(analyzer)
-        
-        # Calculate OKR shifts
-        st.subheader("🎯 OKR Shift Analysis")
-        with st.spinner("Calculating OKR shifts..."):
-            okr_shifts = analyzer.calculate_okr_shifts_by_user()
-        
-        if okr_shifts:
-            show_okr_analysis(okr_shifts, analyzer.get_last_friday_date())
-        else:
-            st.warning("No OKR shift data available")
-        
-        # Analyze checkin behavior
-        st.subheader("📝 Checkin Behavior Analysis")
-        with st.spinner("Analyzing checkin behavior..."):
-            period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
-        
-        if period_checkins and overall_checkins:
-            show_checkin_analysis(period_checkins, overall_checkins, analyzer.get_last_friday_date(), analyzer.get_quarter_start_date())
-        else:
-            st.warning("No checkin data available")
-        
-        # Data export
-        st.subheader("💾 Export Data")
-        show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer)
-        
-        st.success("✅ Analysis completed successfully!")
-        
-    except Exception as e:
-        st.error(f"❌ Analysis failed: {e}")
-        progress_bar.empty()
-        status_text.empty()
+        today = datetime.now()
+        days_since_monday = today.weekday()
+        monday_this_week = today - timedelta(days=days_since_monday)
+        monday_last_week = monday_this_week - timedelta(days=7)
+        sunday_last_week = monday_last_week + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    
+        quarter_start = DateUtils.get_quarter_start_date()
+        weeks_in_quarter = (today - quarter_start).days / 7
+        weeks_in_quarter = max(weeks_in_quarter, 1)
+    
+        for user in all_users:
+            try:
+                user_total_checkins = all_time_df[all_time_df['goal_user_name'] == user]['checkin_id'].nunique()
+                user_total_krs = full_df[full_df['goal_user_name'] == user]['kr_id'].nunique()
+                checkin_rate = (user_total_checkins / user_total_krs * 100) if user_total_krs > 0 else 0
+    
+                user_checkins_dates = all_time_df[all_time_df['goal_user_name'] == user]['checkin_since_dt'].dropna()
+                first_checkin = user_checkins_dates.min() if len(user_checkins_dates) > 0 else None
+                last_checkin = user_checkins_dates.max() if len(user_checkins_dates) > 0 else None
+                days_active = (last_checkin - first_checkin).days if first_checkin and last_checkin else 0
+    
+                checkin_frequency = user_total_checkins / weeks_in_quarter
+                
+                user_last_week_checkins = 0
+                if len(user_checkins_dates) > 0:
+                    last_week_checkins = user_checkins_dates[
+                        (user_checkins_dates >= monday_last_week) & 
+                        (user_checkins_dates <= sunday_last_week)
+                    ]
+                    user_last_week_checkins = len(last_week_checkins)
+    
+                overall_checkins.append({
+                    'user_name': user,
+                    'total_checkins': user_total_checkins,
+                    'total_krs': user_total_krs,
+                    'checkin_rate': checkin_rate,
+                    'first_checkin': first_checkin,
+                    'last_checkin': last_checkin,
+                    'days_active': days_active,
+                    'checkin_frequency_per_week': checkin_frequency,
+                    'last_week_checkins': user_last_week_checkins,
+                    'weeks_in_quarter': weeks_in_quarter
+                })
+            except Exception as e:
+                st.warning(f"Error analyzing overall checkins for {user}: {e}")
+                continue
+    
+        return sorted(overall_checkins, key=lambda x: x['total_checkins'], reverse=True)
+
+# ==================== STREAMLIT UI FUNCTIONS ====================
 
 def show_data_summary(df, analyzer):
     """Show data summary statistics"""
@@ -2176,7 +1656,6 @@ def show_data_summary(df, analyzer):
 def show_missing_analysis_section(analyzer):
     """Show missing goals and checkins analysis"""
     
-    # Get the analysis data
     members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
     
     # Summary metrics
@@ -2201,7 +1680,7 @@ def show_missing_analysis_section(analyzer):
         goals_no_checkins_pct = (goals_no_checkins_count / total_members * 100) if total_members > 0 else 0
         st.metric("Has Goals but No Checkins", goals_no_checkins_count, delta=f"{goals_no_checkins_pct:.1f}%")
     
-    # Visual representation with tables below each chart
+    # Visual representation
     st.subheader("📊 Missing Analysis Visualization")
     
     col1, col2 = st.columns(2)
@@ -2223,12 +1702,12 @@ def show_missing_analysis_section(analyzer):
         )
         st.plotly_chart(fig_goals, use_container_width=True)
         
-        # Members Without Goals table below the goals chart
+        # Members Without Goals table
         st.subheader("🚫 Members Without Goals")
         if members_without_goals:
             no_goals_df = pd.DataFrame(members_without_goals)
             st.dataframe(
-                no_goals_df[['name', 'username', 'job', 'email']],  # Added email to display
+                no_goals_df[['name', 'username', 'job', 'email']],
                 use_container_width=True,
                 height=300
             )
@@ -2262,14 +1741,14 @@ def show_missing_analysis_section(analyzer):
         )
         st.plotly_chart(fig_checkins, use_container_width=True)
         
-        # Members with Goals but No Checkins table below the checkins chart
+        # Members with Goals but No Checkins table
         if members_with_goals_no_checkins:
             st.subheader("⚠️ Members with Goals but No Checkins")
             st.warning("These members have set up goals but haven't made any checkins yet. They may need guidance or reminders.")
             
             goals_no_checkins_df = pd.DataFrame(members_with_goals_no_checkins)
             st.dataframe(
-                goals_no_checkins_df[['name', 'username', 'job', 'email']],  # Added email to display
+                goals_no_checkins_df[['name', 'username', 'job', 'email']],
                 use_container_width=True,
                 height=300
             )
@@ -2286,7 +1765,6 @@ def show_missing_analysis_section(analyzer):
         else:
             st.success("✅ All members with goals have made checkins!")
 
-# Cập nhật hàm show_okr_analysis để hiển thị ngày tham chiếu
 def show_okr_analysis(okr_shifts, last_friday):
     """Show OKR shift analysis with reference date"""
     
@@ -2314,7 +1792,7 @@ def show_okr_analysis(okr_shifts, last_friday):
     with col4:
         st.metric("Dịch chuyển TB", f"{avg_shift:.2f}", delta=None)
     
-    # OKR shift chart with reference date in title
+    # OKR shift chart
     okr_df = pd.DataFrame(okr_shifts)
     
     fig = px.bar(
@@ -2352,6 +1830,7 @@ def show_okr_analysis(okr_shifts, last_friday):
         display_df = issue_df[display_cols].round(2)
         display_df.columns = ['Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', f'Giá trị thứ 6 tuần trước']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
+
 def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarter_start):
     """Show checkin behavior analysis"""
     
@@ -2393,17 +1872,15 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     )
     st.plotly_chart(fig, use_container_width=True)
     
-    # Top checkin users - IMPROVED SECTION with updated frequency calculation
+    # Top checkin users
     st.subheader("🏆 Most Active (Overall)")
     
-    # Calculate quarter information
     today = datetime.now()
     days_since_monday = today.weekday()
     monday_this_week = today - timedelta(days=days_since_monday)
     monday_last_week = monday_this_week - timedelta(days=7)
     sunday_last_week = monday_last_week + timedelta(days=6)
     
-    # Calculate weeks in quarter for context
     weeks_in_quarter = (today - quarter_start).days / 7
     weeks_in_quarter = max(weeks_in_quarter, 1)
     
@@ -2413,7 +1890,6 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     # Select and format columns for display
     top_overall = overall_df.nlargest(20, 'total_checkins').copy()
     
-    # Create display dataframe with improved formatting
     display_df = top_overall[[
         'user_name', 
         'total_checkins', 
@@ -2421,7 +1897,6 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
         'last_week_checkins'
     ]].copy()
     
-    # Rename columns for better display
     display_df.columns = [
         '👤 Nhân viên',
         '📊 Tổng checkin', 
@@ -2429,10 +1904,8 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
         '📅 Checkin tuần trước'
     ]
     
-    # Round numeric values
     display_df['⚡ Tần suất/tuần (quý)'] = display_df['⚡ Tần suất/tuần (quý)'].round(2)
     
-    # Display with improved styling
     st.dataframe(
         display_df,
         use_container_width=True,
@@ -2445,7 +1918,7 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
         }
     )
     
-    # Add summary metrics for last week activity and quarter frequency
+    # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -2464,7 +1937,7 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
         max_frequency_quarter = overall_df['checkin_frequency_per_week'].max()
         st.metric("🏆 Tần suất cao nhất/tuần", f"{max_frequency_quarter:.2f}")
     
-    # Add frequency distribution chart
+    # Frequency distribution chart
     st.subheader("📈 Phân bố tần suất checkin theo tuần")
     
     frequency_data = overall_df['checkin_frequency_per_week'].dropna()
@@ -2550,6 +2023,251 @@ def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analy
                     file_name=f"filtered_members_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv"
                 )
+
+def run_analysis(analyzer, selected_cycle, show_missing_analysis):
+    """Run the main analysis"""
+    
+    st.header(f"📊 Analysis Results for {selected_cycle['name']}")
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(message, progress):
+        status_text.text(message)
+        progress_bar.progress(progress)
+    
+    # Load data
+    try:
+        df = analyzer.load_and_process_data(update_progress)
+        
+        if df is None or df.empty:
+            st.error("❌ Failed to load data. Please check your API tokens and try again.")
+            return
+            
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Show data summary
+        show_data_summary(df, analyzer)
+        
+        # Show missing goals and checkins analysis if enabled
+        if show_missing_analysis:
+            st.subheader("🚨 Missing Goals & Checkins Analysis")
+            with st.spinner("Analyzing missing goals and checkins..."):
+                show_missing_analysis_section(analyzer)
+        
+        # Calculate OKR shifts
+        st.subheader("🎯 OKR Shift Analysis")
+        with st.spinner("Calculating OKR shifts..."):
+            okr_shifts = analyzer.calculate_okr_shifts_by_user()
+        
+        if okr_shifts:
+            show_okr_analysis(okr_shifts, DateUtils.get_last_friday_date())
+        else:
+            st.warning("No OKR shift data available")
+        
+        # Analyze checkin behavior
+        st.subheader("📝 Checkin Behavior Analysis")
+        with st.spinner("Analyzing checkin behavior..."):
+            period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+        
+        if period_checkins and overall_checkins:
+            show_checkin_analysis(period_checkins, overall_checkins, DateUtils.get_last_friday_date(), DateUtils.get_quarter_start_date())
+        else:
+            st.warning("No checkin data available")
+        
+        # Data export
+        st.subheader("💾 Export Data")
+        show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer)
+        
+        st.success("✅ Analysis completed successfully!")
+        
+    except Exception as e:
+        st.error(f"❌ Analysis failed: {e}")
+        progress_bar.empty()
+        status_text.empty()
+
+def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
+    """Send email report with PDF attachment"""
+    
+    st.header("📧 Sending Email Report with PDF")
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    def update_progress(message, progress):
+        status_text.text(message)
+        progress_bar.progress(progress)
+    
+    try:
+        # Load and process data
+        update_progress("Loading data for email report...", 0.1)
+        df = analyzer.load_and_process_data(update_progress)
+        
+        if df is None or df.empty:
+            st.error("❌ Failed to load data for email report")
+            return
+        
+        update_progress("Analyzing missing goals and checkins...", 0.3)
+        members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
+        
+        update_progress("Calculating OKR shifts...", 0.5)
+        okr_shifts = analyzer.calculate_okr_shifts_by_user()
+        
+        update_progress("Creating PDF report...", 0.7)
+        # Create PDF report
+        pdf_generator = PDFReportGenerator()
+        pdf_buffer = pdf_generator.create_pdf_report(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts
+        )
+        
+        update_progress("Creating email content...", 0.8)
+        html_content = email_generator.create_email_content(
+            analyzer, selected_cycle, members_without_goals, members_without_checkins,
+            members_with_goals_no_checkins, okr_shifts
+        )
+        
+        update_progress("Sending email with PDF attachment...", 0.9)
+        subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
+        
+        success, message = email_generator.send_email_with_pdf_report(
+            email_from, email_password, email_to, subject, html_content, pdf_buffer
+        )
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if success:
+            st.success(f"✅ {message}")
+            st.info(f"📧 Email report with PDF attachment sent to: {email_to}")
+            
+            # Show email preview and PDF download option
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.checkbox("📋 Show email preview", value=False):
+                    st.subheader("Email Preview")
+                    st.components.v1.html(html_content, height=600, scrolling=True)
+            
+            with col2:
+                if pdf_buffer:
+                    pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    st.download_button(
+                        label="📥 Download PDF Report",
+                        data=pdf_buffer.getvalue(),
+                        file_name=pdf_filename,
+                        mime="application/pdf",
+                        key="download_pdf_report"
+                    )
+        else:
+            st.error(f"❌ {message}")
+            
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"❌ Error sending email report: {e}")
+
+def main():
+    """Main application entry point"""
+    st.title("🎯 OKR & Checkin Analysis Dashboard")
+    st.markdown("---")
+
+    # Get API tokens from environment variables
+    goal_token = os.getenv("GOAL_ACCESS_TOKEN")
+    account_token = os.getenv("ACCOUNT_ACCESS_TOKEN")
+
+    # Check if tokens are available
+    if not goal_token or not account_token:
+        st.error("❌ API tokens not found in environment variables. Please set GOAL_ACCESS_TOKEN and ACCOUNT_ACCESS_TOKEN.")
+        st.info("Make sure to set the following environment variables:")
+        st.code("""
+GOAL_ACCESS_TOKEN=your_goal_token_here
+ACCOUNT_ACCESS_TOKEN=your_account_token_here
+        """)
+        return
+
+    # Initialize analyzer
+    try:
+        analyzer = OKRAnalysisSystem(goal_token, account_token)
+        email_generator = EmailReportGenerator()
+    except Exception as e:
+        st.error(f"Failed to initialize analyzer: {e}")
+        return
+
+    # Sidebar for configuration
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        
+        # Show token status
+        st.subheader("🔑 API Token Status")
+        st.success("✅ Goal Access Token: Loaded")
+        st.success("✅ Account Access Token: Loaded")
+
+    # Get cycles
+    with st.spinner("🔄 Loading available cycles..."):
+        cycles = analyzer.get_cycle_list()
+
+    if not cycles:
+        st.error("❌ Could not load cycles. Please check your API tokens and connection.")
+        return
+
+    # Cycle selection
+    with st.sidebar:
+        st.subheader("📅 Cycle Selection")
+        cycle_options = {f"{cycle['name']} ({cycle['formatted_start_time']})": cycle for cycle in cycles}
+        selected_cycle_name = st.selectbox(
+            "Select Cycle",
+            options=list(cycle_options.keys()),
+            index=0,
+            help="Choose the quarterly cycle to analyze"
+        )
+        
+        selected_cycle = cycle_options[selected_cycle_name]
+        analyzer.checkin_path = selected_cycle['path']
+        
+        st.info(f"🎯 **Selected Cycle:**\n\n**{selected_cycle['name']}**\n\nPath: `{selected_cycle['path']}`\n\nStart: {selected_cycle['formatted_start_time']}")
+
+    # Analysis options
+    with st.sidebar:
+        st.subheader("📊 Analysis Options")
+        show_missing_analysis = st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
+
+    # Email configuration
+    with st.sidebar:
+        st.subheader("📧 Email Report Settings")
+        
+        # Pre-configured email settings
+        email_from = "apluscorp.hr@gmail.com"
+        email_password = 'mems nctq yxss gruw'  # App password
+        email_to = "xnk3@apluscorp.vn"
+        
+        st.info("📧 Email settings are pre-configured")
+        st.text(f"From: {email_from}")
+        st.text(f"To: {email_to}")
+        
+        # Option to override email recipient
+        custom_email = st.text_input("Custom recipient (optional):", placeholder="email@example.com")
+        if custom_email.strip():
+            email_to = custom_email.strip()
+
+    # Main analysis
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
+    
+    with col2:
+        email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
+
+    if analyze_button:
+        run_analysis(analyzer, selected_cycle, show_missing_analysis)
+
+    # Send email report
+    if email_button:
+        send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
 if __name__ == "__main__":
     main()
