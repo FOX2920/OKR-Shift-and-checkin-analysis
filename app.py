@@ -2305,6 +2305,46 @@ def _display_checkins_pie_chart_and_table(members_with_goals_no_checkins: List):
     else:
         st.success("✅ All members with goals have made checkins!")
 
+def _show_okr_user_selection(analyzer) -> List[str]:
+    """Show interface to select specific OKR users"""
+    try:
+        # Get users with OKRs and their details
+        if analyzer.final_df is None or analyzer.filtered_members_df is None:
+            st.warning("Data not loaded yet. Please run analysis first.")
+            return []
+        
+        users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
+        
+        # Create options list with name and email
+        okr_user_options = []
+        okr_user_emails = {}
+        
+        for _, member in analyzer.filtered_members_df.iterrows():
+            if member['name'] in users_with_goals and pd.notna(member['email']) and member['email'].strip():
+                display_name = f"{member['name']} ({member['email']})"
+                okr_user_options.append(display_name)
+                okr_user_emails[display_name] = member['email'].strip()
+        
+        if not okr_user_options:
+            st.warning("No OKR users with valid email addresses found")
+            return []
+        
+        # Show multiselect
+        st.write(f"Select recipients from {len(okr_user_options)} OKR users:")
+        selected_users = st.multiselect(
+            "Choose specific OKR users:",
+            options=okr_user_options,
+            default=okr_user_options,  # Select all by default
+            key="okr_user_selection"
+        )
+        
+        # Return selected emails
+        return [okr_user_emails[user] for user in selected_users]
+        
+    except Exception as e:
+        st.error(f"Error showing OKR user selection: {e}")
+        return []
+
 def show_okr_analysis(okr_shifts: List[Dict], reference_date: datetime, period: str = "weekly"):
     """Show OKR shift analysis with reference date"""
     period_label = "tuần" if period == "weekly" else "tháng"
@@ -2682,14 +2722,20 @@ def send_email_report(analyzer, email_generator: EmailReportGenerator, selected_
 
 def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, selected_cycle: Dict,
                               email_from: str, email_password: str, recipient_option: str, 
-                              custom_emails: Optional[str] = None):
+                              selected_okr_emails: Optional[List[str]] = None):
     """Enhanced email sending with bulk capability and Excel attachment"""
     st.header("📧 Sending Enhanced Email Report")
     
     # Determine recipients
-    recipients = _get_email_recipients(analyzer, recipient_option, custom_emails)
+    recipients = _get_email_recipients(analyzer, recipient_option, selected_okr_emails)
     if not recipients:
         return
+    
+    # Display recipient count
+    if recipient_option == "okr_users":
+        st.info(f"📧 Sending to {len(recipients)} people who have OKRs")
+    elif recipient_option == "select_okr_users":
+        st.info(f"📧 Sending to {len(recipients)} selected OKR users")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -2759,7 +2805,8 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         progress_bar.empty()
         status_text.empty()
 
-def _get_email_recipients(analyzer, recipient_option: str, custom_emails: Optional[str] = None) -> List[str]:
+
+def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: Optional[List[str]] = None) -> List[str]:
     """Get email recipients based on option"""
     if recipient_option == "all":
         recipients = get_email_list(analyzer)
@@ -2773,6 +2820,11 @@ def _get_email_recipients(analyzer, recipient_option: str, custom_emails: Option
         if not recipients:
             st.error("No email addresses found for users with OKRs")
             return []
+    elif recipient_option == "select_okr_users":
+        if not selected_okr_emails:
+            st.error("No OKR users selected")
+            return []
+        recipients = selected_okr_emails
     else:
         st.error("Invalid recipient option")
         return []
@@ -2914,12 +2966,19 @@ def setup_enhanced_email_configuration():
         
         return recipient_option, None
 
-def _display_recipient_info(recipient_option: str):
+def _display_recipient_info(recipient_option: str, selected_okr_emails: Optional[List[str]] = None):
     """Display recipient information"""
     if recipient_option == "all":
         st.info("📊 Will send to all filtered members")
     elif recipient_option == "special":
         st.info("📊 Will send to 2 special recipients with Excel attachment")
+    elif recipient_option == "okr_users":
+        st.info("📊 Will send to all people who have OKRs")
+    elif recipient_option == "select_okr_users":
+        if selected_okr_emails:
+            st.info(f"📊 Will send to {len(selected_okr_emails)} selected OKR users")
+        else:
+            st.warning("No OKR users selected")
     
     st.info("📎 Excel attachment will be included for:\n- hoangta@apluscorp.vn\n- xnk3@apluscorp.vn")
 
