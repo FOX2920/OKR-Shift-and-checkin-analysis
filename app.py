@@ -921,6 +921,41 @@ class EmailReportGenerator:
         
         html += "</tbody></table>"
         return html
+        
+    def _generate_okr_table_html_monthly(self, data):
+        """Generate HTML table for monthly OKR data"""
+        if not data:
+            return "<div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px; color: #7f8c8d;'><p>📭 Không có dữ liệu</p></div>"
+        
+        html = """
+        <table>
+            <thead>
+                <tr>
+                    <th>👤 Nhân viên</th>
+                    <th>📊 Dịch chuyển (tháng)</th>
+                    <th>🎯 Giá trị hiện tại</th>
+                    <th>📅 Giá trị cuối tháng trước</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+        
+        for i, item in enumerate(data):
+            shift_class = "positive" if item['okr_shift_monthly'] > 0 else "negative" if item['okr_shift_monthly'] < 0 else "neutral"
+            shift_icon = "📈" if item['okr_shift_monthly'] > 0 else "📉" if item['okr_shift_monthly'] < 0 else "➡️"
+            row_class = "even" if i % 2 == 0 else "odd"
+            
+            html += f"""
+            <tr class='{row_class}'>
+                <td><strong>{item['user_name']}</strong></td>
+                <td class="{shift_class}">{shift_icon} <strong>{item['okr_shift_monthly']:.2f}</strong></td>
+                <td><span style='color: #3498db; font-weight: 600;'>{item['current_value']:.2f}</span></td>
+                <td><span style='color: #7f8c8d;'>{item['last_month_value']:.2f}</span></td>
+            </tr>
+            """
+        
+        html += "</tbody></table>"
+        return html
 
     def _generate_top_overall_table_html(self, overall_checkins_data):
         """Generate HTML table for top overall checkin users"""
@@ -998,218 +1033,311 @@ class EmailReportGenerator:
         return html
 
     def create_email_content(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                           members_with_goals_no_checkins, okr_shifts):
-        """Create HTML email content with fallback charts"""
-        
-        current_date = datetime.now().strftime("%d/%m/%Y")
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-        
-        # Calculate statistics
-        members_with_goals = total_members - len(members_without_goals)
-        members_with_checkins = total_members - len(members_without_checkins)
-        
-        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
-        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
-        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
-        
-        # Get checkin behavior analysis data
-        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
-        
-        # Create visual charts
-        goal_chart = self.create_visual_html_chart(
-            {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
-            'pie', 'Phân bố trạng thái OKR'
-        )
-        
-        checkins_table = self._generate_table_html(members_without_checkins,
-                                                 ["Tên", "Username", "Chức vụ", "Có OKR"],
-                                                 ["name", "username", "job", "has_goal"])
-        
-        okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
-        okr_shifts_chart = self.create_visual_html_chart(
-            okr_shifts_data, 'bar', 'Dịch chuyển OKR của nhân viên (Top 15)'
-        )
-        
-        # Generate tables
-        goals_table = self._generate_table_html(members_without_goals, 
-                                               ["Tên", "Username", "Chức vụ"], 
-                                               ["name", "username", "job"])
-        
-        goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
-                                                          ["Tên", "Username", "Chức vụ"],
-                                                          ["name", "username", "job"])
-        
-        top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
-        top_performers_table = self._generate_okr_table_html(top_performers)
-        
-        issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
-        issue_performers_table = self._generate_okr_table_html(issue_performers)
-        
-        top_overall_table = self._generate_top_overall_table_html(overall_checkins[:20] if overall_checkins else [])
-        
-        html_content = f"""
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
-                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
-                .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
-                .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
-                .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
-                .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
-                .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
-                .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
-                .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
-                .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
-                .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
-                table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-                th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
-                td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
-                tr:nth-child(even) {{ background: #f8f9fa; }}
-                tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
-                .chart-container {{ text-align: center; margin: 30px 0; }}
-                .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
-                .chart-fallback {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px 0; }}
-                .positive {{ color: #27AE60; font-weight: bold; }}
-                .negative {{ color: #E74C3C; font-weight: bold; }}
-                .neutral {{ color: #F39C12; font-weight: bold; }}
-                .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
-                .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
-                .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
-                .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
-                .alert strong {{ font-weight: 600; }}
-                @media (max-width: 768px) {{
-                    .metrics {{ flex-direction: column; }}
-                    .modern-chart {{ padding: 20px; }}
-                    .section {{ padding: 20px; }}
-                    table {{ font-size: 12px; }}
-                    th, td {{ padding: 10px 8px; }}
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
-                <h2>{selected_cycle['name']}</h2>
-                <p>Ngày báo cáo: {current_date}</p>
-            </div>
+                               members_with_goals_no_checkins, okr_shifts, okr_shifts_monthly=None):
+            """Create HTML email content with fallback charts including monthly data when applicable"""
             
-            <div class="section">
-                <h2>📈 TỔNG QUAN</h2>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-value">{total_members}</div>
-                        <div class="metric-label">Tổng nhân viên</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{members_with_goals}</div>
-                        <div class="metric-label">Có OKR</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{members_with_checkins}</div>
-                        <div class="metric-label">Có Checkin</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{progress_users}</div>
-                        <div class="metric-label">Tiến bộ</div>
-                    </div>
-                </div>
-            </div>
+            current_date = datetime.now().strftime("%d/%m/%Y")
+            total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
             
-            <div class="section">
-                <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
-                <div class="chart-container">
-                    {checkins_table}
-                </div>
-                <div class="alert alert-info">
-                    <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
-                </div>
-            </div>
+            # Calculate statistics
+            members_with_goals = total_members - len(members_without_goals)
+            members_with_checkins = total_members - len(members_without_checkins)
             
-            <div class="section">
-                <h2>📊 DỊCH CHUYỂN OKR</h2>
-                <div class="chart-container">
-                    {okr_shifts_chart}
-                </div>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-value positive">{progress_users}</div>
-                        <div class="metric-label">Tiến bộ</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value neutral">{stable_users}</div>
-                        <div class="metric-label">Ổn định</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value negative">{issue_users}</div>
-                        <div class="metric-label">Cần quan tâm</div>
-                    </div>
-                </div>
-            </div>
+            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
+            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
+            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
             
-            <div class="section">
-                <h2>🏆 TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN NHIỀU NHẤT</h2>
-                <div class="alert alert-info">
-                    <strong>Thống kê:</strong> Xếp hạng dựa trên tổng số checkin và tần suất checkin từ đầu quý
+            # Monthly statistics (if available)
+            monthly_stats = {}
+            if okr_shifts_monthly:
+                monthly_stats = {
+                    'progress_users_monthly': len([u for u in okr_shifts_monthly if u['okr_shift_monthly'] > 0]),
+                    'stable_users_monthly': len([u for u in okr_shifts_monthly if u['okr_shift_monthly'] == 0]),
+                    'issue_users_monthly': len([u for u in okr_shifts_monthly if u['okr_shift_monthly'] < 0])
+                }
+            
+            # Get checkin behavior analysis data
+            period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
+            
+            # Create visual charts - weekly
+            goal_chart = self.create_visual_html_chart(
+                {'Có OKR': members_with_goals, 'Chưa có OKR': len(members_without_goals)},
+                'pie', 'Phân bố trạng thái OKR'
+            )
+            
+            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]} if okr_shifts else {}
+            okr_shifts_chart = self.create_visual_html_chart(
+                okr_shifts_data, 'bar', 'Dịch chuyển OKR tuần (Top 15)'
+            )
+            
+            # Create monthly chart if available
+            monthly_chart_html = ""
+            if okr_shifts_monthly:
+                okr_shifts_monthly_data = {u['user_name']: u['okr_shift_monthly'] for u in okr_shifts_monthly[:15]}
+                monthly_chart_html = self.create_visual_html_chart(
+                    okr_shifts_monthly_data, 'bar', 'Dịch chuyển OKR tháng (Top 15)'
+                )
+            
+            # Generate tables
+            goals_table = self._generate_table_html(members_without_goals, 
+                                                   ["Tên", "Username", "Chức vụ"], 
+                                                   ["name", "username", "job"])
+            
+            checkins_table = self._generate_table_html(members_without_checkins,
+                                                     ["Tên", "Username", "Chức vụ", "Có OKR"],
+                                                     ["name", "username", "job", "has_goal"])
+            
+            goals_no_checkins_table = self._generate_table_html(members_with_goals_no_checkins,
+                                                              ["Tên", "Username", "Chức vụ"],
+                                                              ["name", "username", "job"])
+            
+            # Top performers tables
+            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []
+            top_performers_table = self._generate_okr_table_html(top_performers)
+            
+            top_performers_monthly = [u for u in okr_shifts_monthly if u['okr_shift_monthly'] > 0][:10] if okr_shifts_monthly else []
+            top_performers_monthly_table = self._generate_okr_table_html_monthly(top_performers_monthly) if top_performers_monthly else ""
+            
+            # Issue users tables
+            issue_performers = [u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []
+            issue_performers_table = self._generate_okr_table_html(issue_performers)
+            
+            issue_performers_monthly = [u for u in okr_shifts_monthly if u['okr_shift_monthly'] < 0][:10] if okr_shifts_monthly else []
+            issue_performers_monthly_table = self._generate_okr_table_html_monthly(issue_performers_monthly) if issue_performers_monthly else ""
+            
+            # Top overall table
+            top_overall_table = self._generate_top_overall_table_html(overall_checkins[:20] if overall_checkins else [])
+            
+            # Start building HTML content
+            html_content = f"""
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #2c3e50; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
+                    .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
+                    .header h1 {{ margin: 0 0 10px 0; font-size: 28px; font-weight: 700; }}
+                    .header h2 {{ margin: 0 0 10px 0; font-size: 22px; font-weight: 500; opacity: 0.9; }}
+                    .header p {{ margin: 0; font-size: 16px; opacity: 0.8; }}
+                    .section {{ background: white; padding: 30px; margin: 25px 0; border-radius: 15px; box-shadow: 0 5px 20px rgba(0,0,0,0.08); border: 1px solid #e9ecef; }}
+                    .section h2 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 25px; font-size: 22px; }}
+                    .metrics {{ display: flex; justify-content: space-around; margin: 25px 0; flex-wrap: wrap; gap: 15px; }}
+                    .metric {{ background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.08); min-width: 140px; flex: 1; border: 1px solid #e9ecef; }}
+                    .metric-value {{ font-size: 32px; font-weight: 700; color: #3498db; margin-bottom: 5px; }}
+                    .metric-label {{ font-size: 14px; color: #7f8c8d; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }}
+                    table {{ width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
+                    th {{ padding: 16px; text-align: left; background: linear-gradient(135deg, #3498db, #2980b9); color: white; font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }}
+                    td {{ padding: 14px 16px; border-bottom: 1px solid #ecf0f1; font-size: 14px; }}
+                    tr:nth-child(even) {{ background: #f8f9fa; }}
+                    tr:hover {{ background: #e8f4f8; transition: background 0.2s ease; }}
+                    .chart-container {{ text-align: center; margin: 30px 0; }}
+                    .modern-chart {{ background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 30px; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin: 25px 0; border: 1px solid #e9ecef; }}
+                    .positive {{ color: #27AE60; font-weight: bold; }}
+                    .negative {{ color: #E74C3C; font-weight: bold; }}
+                    .neutral {{ color: #F39C12; font-weight: bold; }}
+                    .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #2c3e50, #34495e); color: white; border-radius: 15px; }}
+                    .alert {{ padding: 18px; margin: 20px 0; border-radius: 10px; border-left: 4px solid; }}
+                    .alert-warning {{ background: linear-gradient(135deg, #fff3cd, #fef8e6); border-left-color: #f39c12; color: #856404; }}
+                    .alert-info {{ background: linear-gradient(135deg, #d1ecf1, #e8f5f7); border-left-color: #3498db; color: #0c5460; }}
+                    .monthly-indicator {{ background: linear-gradient(135deg, #e8f5e8, #f0fff0); border: 2px solid #27AE60; border-radius: 10px; padding: 15px; margin: 20px 0; }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>📊 BÁO CÁO TIẾN ĐỘ OKR & CHECKIN</h1>
+                    <h2>{selected_cycle['name']}</h2>
+                    <p>Ngày báo cáo: {current_date}</p>
                 </div>
-                {top_overall_table}
-            </div>
-        """
-        
-        # Add detailed tables
-        if members_without_goals:
-            html_content += f"""
-            <div class="section">
-                <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
-                <div class="alert alert-warning">
-                    <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
+                
+                <div class="section">
+                    <h2>📈 TỔNG QUAN</h2>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-value">{total_members}</div>
+                            <div class="metric-label">Tổng nhân viên</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{members_with_goals}</div>
+                            <div class="metric-label">Có OKR</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{members_with_checkins}</div>
+                            <div class="metric-label">Có Checkin</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{progress_users}</div>
+                            <div class="metric-label">Tiến bộ (tuần)</div>
+                        </div>
+            """
+            
+            # Add monthly metric if available
+            if monthly_stats:
+                html_content += f"""
+                        <div class="metric">
+                            <div class="metric-value">{monthly_stats['progress_users_monthly']}</div>
+                            <div class="metric-label">Tiến bộ (tháng)</div>
+                        </div>
+                """
+            
+            html_content += """
+                    </div>
                 </div>
-                {goals_table}
-            </div>
             """
-        
-        if members_with_goals_no_checkins:
-            html_content += f"""
-            <div class="section">
-                <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
-                <div class="alert alert-warning">
-                    <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
+            
+            # Add monthly indicator if applicable
+            if okr_shifts_monthly:
+                current_month = datetime.now().month
+                month_name = {2: "Tháng 2", 3: "Tháng 3", 5: "Tháng 5", 6: "Tháng 6", 
+                             8: "Tháng 8", 9: "Tháng 9", 11: "Tháng 11", 12: "Tháng 12"}.get(current_month, f"Tháng {current_month}")
+                
+                html_content += f"""
+                <div class="monthly-indicator">
+                    <strong>🗓️ {month_name}:</strong> Báo cáo này bao gồm phân tích dịch chuyển OKR theo tháng (so với cuối tháng trước)
                 </div>
-                {goals_no_checkins_table}
-            </div>
-            """
-        
-        if top_performers:
+                """
+            
+            # Continue with existing sections...
             html_content += f"""
-            <div class="section">
-                <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT</h2>
-                {top_performers_table}
-            </div>
-            """
-        
-        if issue_performers:
-            html_content += f"""
-            <div class="section">
-                <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ</h2>
-                <div class="alert alert-warning">
-                    <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
+                <div class="section">
+                    <h2>📝 DANH SÁCH NHÂN VIÊN CHƯA CHECKIN</h2>
+                    <div class="chart-container">
+                        {checkins_table}
+                    </div>
+                    <div class="alert alert-info">
+                        <strong>Thống kê:</strong> {members_with_checkins}/{total_members} nhân viên đã có Checkin ({(members_with_checkins/total_members*100):.1f}%)
+                    </div>
                 </div>
-                {issue_performers_table}
-            </div>
+                
+                <div class="section">
+                    <h2>📊 DỊCH CHUYỂN OKR (TUẦN)</h2>
+                    <div class="chart-container">
+                        {okr_shifts_chart}
+                    </div>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-value positive">{progress_users}</div>
+                            <div class="metric-label">Tiến bộ</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value neutral">{stable_users}</div>
+                            <div class="metric-label">Ổn định</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value negative">{issue_users}</div>
+                            <div class="metric-label">Cần quan tâm</div>
+                        </div>
+                    </div>
+                </div>
             """
-        
-        html_content += """
-            <div class="footer">
-                <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
-                <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
-                <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html_content
+            
+            # Add monthly OKR section if available
+            if monthly_chart_html:
+                html_content += f"""
+                <div class="section">
+                    <h2>🗓️ DỊCH CHUYỂN OKR (THÁNG)</h2>
+                    <div class="chart-container">
+                        {monthly_chart_html}
+                    </div>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-value positive">{monthly_stats['progress_users_monthly']}</div>
+                            <div class="metric-label">Tiến bộ</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value neutral">{monthly_stats['stable_users_monthly']}</div>
+                            <div class="metric-label">Ổn định</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value negative">{monthly_stats['issue_users_monthly']}</div>
+                            <div class="metric-label">Cần quan tâm</div>
+                        </div>
+                    </div>
+                </div>
+                """
+            
+            # Continue with rest of email content (checkin analysis, detailed tables, etc.)
+            html_content += f"""
+                <div class="section">
+                    <h2>🏆 TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN NHIỀU NHẤT</h2>
+                    <div class="alert alert-info">
+                        <strong>Thống kê:</strong> Xếp hạng dựa trên tổng số checkin và tần suất checkin từ đầu quý
+                    </div>
+                    {top_overall_table}
+                </div>
+            """
+            
+            # Add detailed tables for goals, checkins, top performers, etc. (keeping existing logic)
+            if members_without_goals:
+                html_content += f"""
+                <div class="section">
+                    <h2>🚫 NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)</h2>
+                    <div class="alert alert-warning">
+                        <strong>Cần hành động:</strong> Những nhân viên này cần được hỗ trợ thiết lập OKR.
+                    </div>
+                    {goals_table}
+                </div>
+                """
+            
+            if members_with_goals_no_checkins:
+                html_content += f"""
+                <div class="section">
+                    <h2>⚠️ CÓ OKR NHƯNG CHƯA CHECKIN ({len(members_with_goals_no_checkins)} người)</h2>
+                    <div class="alert alert-warning">
+                        <strong>Ưu tiên cao:</strong> Đã có mục tiêu nhưng chưa cập nhật tiến độ.
+                    </div>
+                    {goals_no_checkins_table}
+                </div>
+                """
+            
+            if top_performers:
+                html_content += f"""
+                <div class="section">
+                    <h2>🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT (TUẦN)</h2>
+                    {top_performers_table}
+                </div>
+                """
+            
+            if top_performers_monthly_table:
+                html_content += f"""
+                <div class="section">
+                    <h2>🗓️ TOP NHÂN VIÊN TIẾN BỘ NHẤT (THÁNG)</h2>
+                    {top_performers_monthly_table}
+                </div>
+                """
+            
+            if issue_performers:
+                html_content += f"""
+                <div class="section">
+                    <h2>⚠️ NHÂN VIÊN CẦN HỖ TRỢ (TUẦN)</h2>
+                    <div class="alert alert-warning">
+                        <strong>Cần quan tâm:</strong> OKR của những nhân viên này đang giảm hoặc không tiến triển.
+                    </div>
+                    {issue_performers_table}
+                </div>
+                """
+            
+            if issue_performers_monthly_table:
+                html_content += f"""
+                <div class="section">
+                    <h2>🗓️ NHÂN VIÊN CẦN HỖ TRỢ (THÁNG)</h2>
+                    <div class="alert alert-warning">
+                        <strong>Cần quan tâm:</strong> OKR tháng của những nhân viên này đang giảm hoặc không tiến triển.
+                    </div>
+                    {issue_performers_monthly_table}
+                </div>
+                """
+            
+            html_content += """
+                <div class="footer">
+                    <p><strong>🏢 A Plus Mineral Material Corporation</strong></p>
+                    <p>📊 Báo cáo được tạo tự động bởi hệ thống OKR Analysis</p>
+                    <p><em>📧 Đây là email tự động, vui lòng không trả lời email này.</em></p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            return html_content
 
     def send_email_report(self, email_from, password, email_to, subject, html_content, 
                          company_name="A Plus Mineral Material Corporation"):
@@ -1624,6 +1752,255 @@ class OKRAnalysisSystem:
                 continue
     
         return sorted(overall_checkins, key=lambda x: x['total_checkins'], reverse=True)
+        
+    def get_last_month_end_date(self) -> datetime:
+        """Get last day of previous month - always returns end of previous month regardless of current day"""
+        today = datetime.now()
+        
+        # Get first day of current month
+        first_day_current_month = datetime(today.year, today.month, 1)
+        
+        # Get last day of previous month
+        last_day_previous_month = first_day_current_month - timedelta(days=1)
+        
+        # Set time to end of day
+        last_day_previous_month = last_day_previous_month.replace(hour=23, minute=59, second=59)
+        
+        return last_day_previous_month
+    
+    def should_calculate_monthly_shift(self) -> bool:
+        """Check if monthly shift should be calculated (not in months 1,4,7,10)"""
+        current_month = datetime.now().month
+        return current_month not in [1, 4, 7, 10]
+    
+    def calculate_kr_shift_last_month(self, row: pd.Series, last_month_end: datetime) -> float:
+        """Calculate kr_shift_last_month = kr_current_value - last_month_end_checkin_value
+        Always compares against end of previous month"""
+        try:
+            # Get current kr value
+            kr_current_value = pd.to_numeric(row.get('kr_current_value', 0), errors='coerce')
+            if pd.isna(kr_current_value):
+                kr_current_value = 0
+            
+            # Calculate last month end checkin value for this KR
+            kr_id = row.get('kr_id', '')
+            if not kr_id:
+                return kr_current_value  # If no KR ID, shift = current value
+            
+            # Filter data for this specific KR and find checkins within range
+            quarter_start = self.get_quarter_start_date()
+            
+            # Important: Use the reference month end as the cutoff
+            reference_month_end = self.get_last_month_end_date()
+            
+            kr_checkins = self.final_df[
+                (self.final_df['kr_id'] == kr_id) & 
+                (self.final_df['checkin_id'].notna()) &
+                (self.final_df['checkin_name'].notna()) &
+                (self.final_df['checkin_name'] != '')
+            ].copy()
+            
+            # Convert checkin dates and filter by time range up to reference month end
+            if not kr_checkins.empty:
+                kr_checkins['checkin_since_dt'] = pd.to_datetime(kr_checkins['checkin_since'], errors='coerce')
+                kr_checkins = kr_checkins[
+                    (kr_checkins['checkin_since_dt'] >= quarter_start) &
+                    (kr_checkins['checkin_since_dt'] <= reference_month_end)
+                ]
+                
+                # Get latest checkin value in range (up to reference month end)
+                if not kr_checkins.empty:
+                    latest_checkin = kr_checkins.loc[kr_checkins['checkin_since_dt'].idxmax()]
+                    last_month_checkin_value = pd.to_numeric(latest_checkin.get('checkin_kr_current_value', 0), errors='coerce')
+                    if pd.isna(last_month_checkin_value):
+                        last_month_checkin_value = 0
+                else:
+                    last_month_checkin_value = 0
+            else:
+                last_month_checkin_value = 0
+            
+            # Calculate shift: current value - value as of reference month end
+            kr_shift = kr_current_value - last_month_checkin_value
+            return kr_shift
+            
+        except Exception as e:
+            st.warning(f"Error calculating kr_shift_last_month: {e}")
+            return 0
+    
+    def calculate_final_okr_goal_shift_monthly(self, user_df: pd.DataFrame) -> float:
+        """
+        Calculate final_okr_goal_shift using reference to previous month end:
+        1. Group by unique combination of goal_name + kr_name
+        2. Calculate average kr_shift_last_month for each combination
+        3. Calculate average of all combination averages
+        Always uses end of previous month as reference point
+        """
+        try:
+            # Get reference month end
+            reference_month_end = self.get_last_month_end_date()
+            
+            # Create unique combinations mapping
+            unique_combinations = {}
+            
+            # Process each row to calculate kr_shift_last_month
+            for idx, row in user_df.iterrows():
+                goal_name = row.get('goal_name', '')
+                kr_name = row.get('kr_name', '')
+                
+                # Skip rows without goal_name or kr_name
+                if not goal_name or not kr_name:
+                    continue
+                
+                # Create unique combination key
+                combo_key = f"{goal_name}|{kr_name}"
+                
+                # Calculate kr_shift using reference month end
+                kr_shift = self.calculate_kr_shift_last_month(row, reference_month_end)
+                
+                # Add to combinations
+                if combo_key not in unique_combinations:
+                    unique_combinations[combo_key] = []
+                unique_combinations[combo_key].append(kr_shift)
+            
+            # Calculate final_okr_monthly_shift for each unique combination
+            final_okr_monthly_shifts = []
+            
+            for combo_key, kr_shifts in unique_combinations.items():
+                # Calculate average kr_shift_last_month for this combination
+                if kr_shifts:
+                    avg_kr_shift = sum(kr_shifts) / len(kr_shifts)
+                    final_okr_monthly_shifts.append(avg_kr_shift)
+            
+            # Calculate final_okr_goal_shift_monthly (average of all final_okr_monthly_shift)
+            if final_okr_monthly_shifts:
+                final_okr_goal_shift_monthly = sum(final_okr_monthly_shifts) / len(final_okr_monthly_shifts)
+            else:
+                final_okr_goal_shift_monthly = 0
+            
+            return final_okr_goal_shift_monthly
+            
+        except Exception as e:
+            st.error(f"Error calculating final_okr_goal_shift_monthly: {e}")
+            return 0
+    
+    def calculate_last_month_value(self, last_month_end: datetime, df: pd.DataFrame = None) -> Tuple[float, List[Dict]]:
+        """Calculate OKR value as of last month end"""
+        if df is None:
+            df = self.final_df
+    
+        try:
+            df = df.copy()
+            df['checkin_since_dt'] = pd.to_datetime(df['checkin_since'], errors='coerce')
+    
+            unique_krs = df['kr_id'].dropna().unique()
+            goal_values_dict = {}
+            kr_details = []
+    
+            for kr_id in unique_krs:
+                kr_data = df[df['kr_id'] == kr_id].copy()
+                kr_data['checkin_since_dt'] = pd.to_datetime(kr_data['checkin_since'], errors='coerce')
+    
+                actual_checkins_before_month_end = kr_data[
+                    (kr_data['checkin_since_dt'] <= last_month_end) &
+                    (kr_data['checkin_name'].notna()) &
+                    (kr_data['checkin_name'] != '')
+                ]
+    
+                goal_name = kr_data.iloc[0]['goal_name'] if len(kr_data) > 0 else f"Unknown_{kr_id}"
+    
+                if len(actual_checkins_before_month_end) > 0:
+                    latest_checkin_before_month_end = actual_checkins_before_month_end.sort_values('checkin_since_dt').iloc[-1]
+                    kr_value = pd.to_numeric(latest_checkin_before_month_end['checkin_kr_current_value'], errors='coerce')
+    
+                    if pd.isna(kr_value):
+                        kr_value = 0
+    
+                    if goal_name not in goal_values_dict:
+                        goal_values_dict[goal_name] = []
+                    goal_values_dict[goal_name].append(kr_value)
+    
+                    kr_details.append({
+                        'kr_id': kr_id,
+                        'goal_name': goal_name,
+                        'kr_value': kr_value,
+                        'checkin_date': latest_checkin_before_month_end['checkin_since_dt'],
+                        'source': 'checkin_before_month_end'
+                    })
+                else:
+                    kr_value = 0
+                    goal_key = f"{goal_name}_no_checkin_{kr_id}"
+                    goal_values_dict[goal_key] = [kr_value]
+    
+                    kr_details.append({
+                        'kr_id': kr_id,
+                        'goal_name': goal_name,
+                        'kr_value': kr_value,
+                        'checkin_date': None,
+                        'source': 'no_checkin_before_month_end'
+                    })
+    
+            goal_values = []
+            for goal_name, kr_values_list in goal_values_dict.items():
+                goal_value = np.mean(kr_values_list)
+                goal_values.append(goal_value)
+    
+            last_month_value = np.mean(goal_values) if goal_values else 0
+            return last_month_value, kr_details
+    
+        except Exception as e:
+            st.error(f"Error calculating last month value: {e}")
+            return 0, []
+
+    def calculate_okr_shifts_by_user_monthly(self) -> List[Dict]:
+        """Calculate monthly OKR shifts for each user always comparing against previous month end
+        If shift > current_value, then shift = current_value - last_month_value"""
+        try:
+            if not self.should_calculate_monthly_shift():
+                return []  # Return empty list if not applicable
+                
+            users = self.final_df['goal_user_name'].dropna().unique()
+            user_okr_shifts_monthly = []
+    
+            # Get reference month end for all calculations
+            reference_month_end = self.get_last_month_end_date()
+    
+            for user in users:
+                user_df = self.final_df[self.final_df['goal_user_name'] == user].copy()
+                
+                # Calculate final_okr_goal_shift_monthly using reference month end
+                final_okr_goal_shift_monthly = self.calculate_final_okr_goal_shift_monthly(user_df)
+                
+                # Calculate current and last month values for comparison/legacy
+                current_value = self.calculate_current_value(user_df)
+                last_month_value, kr_details = self.calculate_last_month_value(reference_month_end, user_df)
+                legacy_okr_shift = current_value - last_month_value
+    
+                # NEW LOGIC: If shift > current_value, then shift = current_value - last_month_value
+                adjusted_okr_shift = final_okr_goal_shift_monthly
+                adjustment_applied = False
+                
+                if final_okr_goal_shift_monthly > current_value:
+                    adjusted_okr_shift = current_value - last_month_value
+                    adjustment_applied = True
+    
+                user_okr_shifts_monthly.append({
+                    'user_name': user,
+                    'okr_shift_monthly': adjusted_okr_shift,  # Use adjusted value
+                    'original_shift_monthly': final_okr_goal_shift_monthly,  # Keep original for reference
+                    'current_value': current_value,
+                    'last_month_value': last_month_value,
+                    'legacy_okr_shift_monthly': legacy_okr_shift,  # Keep old method for reference
+                    'adjustment_applied': adjustment_applied,  # Flag to show if adjustment was applied
+                    'kr_details_count': len(kr_details),
+                    'reference_month_end': reference_month_end.strftime('%d/%m/%Y')  # Add reference date
+                })
+    
+            # Sort by adjusted okr_shift_monthly descending
+            return sorted(user_okr_shifts_monthly, key=lambda x: x['okr_shift_monthly'], reverse=True)
+    
+        except Exception as e:
+            st.error(f"Error calculating monthly OKR shifts: {e}")
+            return []
 
 # ==================== STREAMLIT UI FUNCTIONS ====================
 
@@ -1765,20 +2142,25 @@ def show_missing_analysis_section(analyzer):
         else:
             st.success("✅ All members with goals have made checkins!")
 
-def show_okr_analysis(okr_shifts, last_friday):
+def show_okr_analysis(okr_shifts, reference_date, period="weekly"):
     """Show OKR shift analysis with reference date"""
     
+    period_label = "tuần" if period == "weekly" else "tháng"
+    shift_key = 'okr_shift' if period == "weekly" else 'okr_shift_monthly'
+    last_value_key = 'last_friday_value' if period == "weekly" else 'last_month_value'
+    
     # Display reference information
-    st.info(f"📅 **Ngày tham chiếu:** Thứ 6 tuần trước ({last_friday.strftime('%d/%m/%Y')})")
-    st.info(f"📊 **Logic tính toán:** So sánh giá trị hiện tại với giá trị tại thứ 6 tuần trước")
+    reference_label = f"thứ 6 {period_label} trước" if period == "weekly" else f"cuối {period_label} trước"
+    st.info(f"📅 **Ngày tham chiếu:** {reference_label.title()} ({reference_date.strftime('%d/%m/%Y')})")
+    st.info(f"📊 **Logic tính toán:** So sánh giá trị hiện tại với giá trị tại {reference_label}")
     
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
     
-    progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
-    stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
-    issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0])
-    avg_shift = np.mean([u['okr_shift'] for u in okr_shifts])
+    progress_users = len([u for u in okr_shifts if u[shift_key] > 0])
+    stable_users = len([u for u in okr_shifts if u[shift_key] == 0])
+    issue_users = len([u for u in okr_shifts if u[shift_key] < 0])
+    avg_shift = np.mean([u[shift_key] for u in okr_shifts])
     
     with col1:
         st.metric("Tiến bộ", progress_users, delta=f"{progress_users/len(okr_shifts)*100:.1f}%")
@@ -1792,19 +2174,19 @@ def show_okr_analysis(okr_shifts, last_friday):
     with col4:
         st.metric("Dịch chuyển TB", f"{avg_shift:.2f}", delta=None)
     
-    # OKR shift chart
+    # OKR shift chart with reference date in title
     okr_df = pd.DataFrame(okr_shifts)
     
     fig = px.bar(
         okr_df.head(20), 
         x='user_name', 
-        y='okr_shift',
-        title=f"Dịch chuyển OKR so với thứ 6 tuần trước ({last_friday.strftime('%d/%m/%Y')})",
-        color='okr_shift',
+        y=shift_key,
+        title=f"Dịch chuyển OKR so với {reference_label} ({reference_date.strftime('%d/%m/%Y')})",
+        color=shift_key,
         color_continuous_scale=['red', 'yellow', 'green'],
         labels={
             'user_name': 'Nhân viên',
-            'okr_shift': 'Dịch chuyển OKR'
+            shift_key: f'Dịch chuyển OKR ({period_label})'
         }
     )
     fig.update_xaxes(tickangle=45)
@@ -1812,23 +2194,23 @@ def show_okr_analysis(okr_shifts, last_friday):
     st.plotly_chart(fig, use_container_width=True)
     
     # Top performers table
-    st.subheader("🏆 Nhân viên tiến bộ nhất")
-    top_performers = okr_df[okr_df['okr_shift'] > 0].head(10)
+    st.subheader(f"🏆 Nhân viên tiến bộ nhất ({period_label})")
+    top_performers = okr_df[okr_df[shift_key] > 0].head(10)
     if not top_performers.empty:
-        display_cols = ['user_name', 'okr_shift', 'current_value', 'last_friday_value']
+        display_cols = ['user_name', shift_key, 'current_value', last_value_key]
         display_df = top_performers[display_cols].round(2)
-        display_df.columns = ['Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', f'Giá trị thứ 6 tuần trước']
+        display_df.columns = ['Nhân viên', f'Dịch chuyển ({period_label})', 'Giá trị hiện tại', f'Giá trị {reference_label}']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
-        st.info("Không có nhân viên nào có dịch chuyển OKR dương")
+        st.info(f"Không có nhân viên nào có dịch chuyển OKR {period_label} dương")
     
     # Issues table
     if issue_users > 0:
-        st.subheader("⚠️ Nhân viên cần hỗ trợ")
-        issue_df = okr_df[okr_df['okr_shift'] < 0]
-        display_cols = ['user_name', 'okr_shift', 'current_value', 'last_friday_value']
+        st.subheader(f"⚠️ Nhân viên cần hỗ trợ ({period_label})")
+        issue_df = okr_df[okr_df[shift_key] < 0]
+        display_cols = ['user_name', shift_key, 'current_value', last_value_key]
         display_df = issue_df[display_cols].round(2)
-        display_df.columns = ['Nhân viên', 'Dịch chuyển', 'Giá trị hiện tại', f'Giá trị thứ 6 tuần trước']
+        display_df.columns = ['Nhân viên', f'Dịch chuyển ({period_label})', 'Giá trị hiện tại', f'Giá trị {reference_label}']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarter_start):
@@ -1968,10 +2350,10 @@ def show_checkin_analysis(period_checkins, overall_checkins, last_friday, quarte
     
     st.plotly_chart(fig_freq, use_container_width=True)
 
-def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer):
-    """Show data export options"""
+def show_export_options(df, okr_shifts, okr_shifts_monthly, period_checkins, overall_checkins, analyzer):
+    """Show data export options including monthly data"""
     
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     with col1:
         if st.button("📊 Export Full Dataset"):
@@ -1984,16 +2366,26 @@ def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analy
             )
     
     with col2:
-        if st.button("🎯 Export OKR Shifts"):
+        if st.button("🎯 Export Weekly OKR Shifts"):
             csv = pd.DataFrame(okr_shifts).to_csv(index=False)
             st.download_button(
                 label="Download CSV",
                 data=csv,
-                file_name=f"okr_shifts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name=f"okr_shifts_weekly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv"
             )
     
     with col3:
+        if okr_shifts_monthly and st.button("🗓️ Export Monthly OKR Shifts"):
+            csv = pd.DataFrame(okr_shifts_monthly).to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"okr_shifts_monthly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+    
+    with col4:
         if st.button("📝 Export Period Checkins"):
             csv = pd.DataFrame(period_checkins).to_csv(index=False)
             st.download_button(
@@ -2003,7 +2395,7 @@ def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analy
                 mime="text/csv"
             )
     
-    with col4:
+    with col5:
         if st.button("📈 Export Overall Checkins"):
             csv = pd.DataFrame(overall_checkins).to_csv(index=False)
             st.download_button(
@@ -2013,7 +2405,7 @@ def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analy
                 mime="text/csv"
             )
     
-    with col5:
+    with col6:
         if st.button("👥 Export Filtered Members"):
             if analyzer.filtered_members_df is not None:
                 csv = analyzer.filtered_members_df.to_csv(index=False)
@@ -2023,6 +2415,72 @@ def show_export_options(df, okr_shifts, period_checkins, overall_checkins, analy
                     file_name=f"filtered_members_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv"
                 )
+
+def show_okr_analysis_monthly(okr_shifts_monthly, last_month_end):
+    """Show monthly OKR shift analysis with reference date"""
+    
+    # Display reference information
+    st.info(f"📅 **Ngày tham chiếu:** Cuối tháng trước ({last_month_end.strftime('%d/%m/%Y')})")
+    st.info(f"📊 **Logic tính toán:** So sánh giá trị hiện tại với giá trị tại cuối tháng trước")
+    
+    # Summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    progress_users = len([u for u in okr_shifts_monthly if u['okr_shift_monthly'] > 0])
+    stable_users = len([u for u in okr_shifts_monthly if u['okr_shift_monthly'] == 0])
+    issue_users = len([u for u in okr_shifts_monthly if u['okr_shift_monthly'] < 0])
+    avg_shift = np.mean([u['okr_shift_monthly'] for u in okr_shifts_monthly])
+    
+    with col1:
+        st.metric("Tiến bộ", progress_users, delta=f"{progress_users/len(okr_shifts_monthly)*100:.1f}%")
+    
+    with col2:
+        st.metric("Ổn định", stable_users, delta=f"{stable_users/len(okr_shifts_monthly)*100:.1f}%")
+    
+    with col3:
+        st.metric("Cần hỗ trợ", issue_users, delta=f"{issue_users/len(okr_shifts_monthly)*100:.1f}%")
+    
+    with col4:
+        st.metric("Dịch chuyển TB", f"{avg_shift:.2f}", delta=None)
+    
+    # OKR shift chart with reference date in title
+    okr_df = pd.DataFrame(okr_shifts_monthly)
+    
+    fig = px.bar(
+        okr_df.head(20), 
+        x='user_name', 
+        y='okr_shift_monthly',
+        title=f"Dịch chuyển OKR so với cuối tháng trước ({last_month_end.strftime('%d/%m/%Y')})",
+        color='okr_shift_monthly',
+        color_continuous_scale=['red', 'yellow', 'green'],
+        labels={
+            'user_name': 'Nhân viên',
+            'okr_shift_monthly': 'Dịch chuyển OKR (tháng)'
+        }
+    )
+    fig.update_xaxes(tickangle=45)
+    fig.update_layout(height=500)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Top performers table
+    st.subheader("🏆 Nhân viên tiến bộ nhất (tháng)")
+    top_performers = okr_df[okr_df['okr_shift_monthly'] > 0].head(10)
+    if not top_performers.empty:
+        display_cols = ['user_name', 'okr_shift_monthly', 'current_value', 'last_month_value']
+        display_df = top_performers[display_cols].round(2)
+        display_df.columns = ['Nhân viên', 'Dịch chuyển (tháng)', 'Giá trị hiện tại', f'Giá trị cuối tháng trước']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Không có nhân viên nào có dịch chuyển OKR tháng dương")
+    
+    # Issues table
+    if issue_users > 0:
+        st.subheader("⚠️ Nhân viên cần hỗ trợ (tháng)")
+        issue_df = okr_df[okr_df['okr_shift_monthly'] < 0]
+        display_cols = ['user_name', 'okr_shift_monthly', 'current_value', 'last_month_value']
+        display_df = issue_df[display_cols].round(2)
+        display_df.columns = ['Nhân viên', 'Dịch chuyển (tháng)', 'Giá trị hiện tại', f'Giá trị cuối tháng trước']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 def run_analysis(analyzer, selected_cycle, show_missing_analysis):
     """Run the main analysis"""
@@ -2057,15 +2515,30 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
             with st.spinner("Analyzing missing goals and checkins..."):
                 show_missing_analysis_section(analyzer)
         
-        # Calculate OKR shifts
-        st.subheader("🎯 OKR Shift Analysis")
-        with st.spinner("Calculating OKR shifts..."):
+        # Calculate OKR shifts (Weekly)
+        st.subheader("🎯 Weekly OKR Shift Analysis")
+        with st.spinner("Calculating weekly OKR shifts..."):
             okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
         if okr_shifts:
-            show_okr_analysis(okr_shifts, DateUtils.get_last_friday_date())
+            show_okr_analysis(okr_shifts, analyzer.get_last_friday_date(), "weekly")
         else:
-            st.warning("No OKR shift data available")
+            st.warning("No weekly OKR shift data available")
+        
+        # Calculate OKR shifts (Monthly) - NEW SECTION
+        if analyzer.should_calculate_monthly_shift():
+            st.subheader("🗓️ Monthly OKR Shift Analysis")
+            with st.spinner("Calculating monthly OKR shifts..."):
+                okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly()
+            
+            if okr_shifts_monthly:
+                show_okr_analysis_monthly(okr_shifts_monthly, analyzer.get_last_month_end_date())
+            else:
+                st.warning("No monthly OKR shift data available")
+        else:
+            current_month = datetime.now().month
+            quarter_months = {1: "Q1", 4: "Q2", 7: "Q3", 10: "Q4"}
+            st.info(f"ℹ️ Monthly OKR shift analysis is not calculated for month {current_month} (start of {quarter_months.get(current_month, 'quarter')})")
         
         # Analyze checkin behavior
         st.subheader("📝 Checkin Behavior Analysis")
@@ -2073,13 +2546,14 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
             period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
         
         if period_checkins and overall_checkins:
-            show_checkin_analysis(period_checkins, overall_checkins, DateUtils.get_last_friday_date(), DateUtils.get_quarter_start_date())
+            show_checkin_analysis(period_checkins, overall_checkins, analyzer.get_last_friday_date(), analyzer.get_quarter_start_date())
         else:
             st.warning("No checkin data available")
         
-        # Data export
+        # Data export - Updated to include monthly data
         st.subheader("💾 Export Data")
-        show_export_options(df, okr_shifts, period_checkins, overall_checkins, analyzer)
+        okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if analyzer.should_calculate_monthly_shift() else []
+        show_export_options(df, okr_shifts, okr_shifts_monthly, period_checkins, overall_checkins, analyzer)
         
         st.success("✅ Analysis completed successfully!")
         
@@ -2089,7 +2563,7 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
         status_text.empty()
 
 def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
-    """Send email report with PDF attachment"""
+    """Send email report with PDF attachment including monthly data when applicable"""
     
     st.header("📧 Sending Email Report with PDF")
     
@@ -2110,24 +2584,30 @@ def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_
             st.error("❌ Failed to load data for email report")
             return
         
-        update_progress("Analyzing missing goals and checkins...", 0.3)
+        update_progress("Analyzing missing goals and checkins...", 0.25)
         members_without_goals, members_without_checkins, members_with_goals_no_checkins = analyzer.analyze_missing_goals_and_checkins()
         
-        update_progress("Calculating OKR shifts...", 0.5)
+        update_progress("Calculating weekly OKR shifts...", 0.4)
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
+        # Calculate monthly OKR shifts if applicable
+        okr_shifts_monthly = []
+        if analyzer.should_calculate_monthly_shift():
+            update_progress("Calculating monthly OKR shifts...", 0.55)
+            okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly()
+        
         update_progress("Creating PDF report...", 0.7)
-        # Create PDF report
+        # Create PDF report with monthly data
         pdf_generator = PDFReportGenerator()
         pdf_buffer = pdf_generator.create_pdf_report(
             analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
+            members_with_goals_no_checkins, okr_shifts, okr_shifts_monthly
         )
         
         update_progress("Creating email content...", 0.8)
         html_content = email_generator.create_email_content(
             analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts
+            members_with_goals_no_checkins, okr_shifts, okr_shifts_monthly
         )
         
         update_progress("Sending email with PDF attachment...", 0.9)
@@ -2142,7 +2622,8 @@ def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_
         
         if success:
             st.success(f"✅ {message}")
-            st.info(f"📧 Email report with PDF attachment sent to: {email_to}")
+            monthly_note = " (bao gồm phân tích tháng)" if okr_shifts_monthly else ""
+            st.info(f"📧 Email report with PDF attachment sent to: {email_to}{monthly_note}")
             
             # Show email preview and PDF download option
             col1, col2 = st.columns(2)
