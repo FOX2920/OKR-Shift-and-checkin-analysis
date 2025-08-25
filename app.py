@@ -2908,7 +2908,7 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
             period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
         
         if period_checkins and overall_checkins:
-            show_checkin_behavior(period_checkins, overall_checkins, DateUtils.get_last_friday_date(), DateUtils.get_quarter_start_date())
+            show_checkin_analysis(period_checkins, overall_checkins, DateUtils.get_last_friday_date(), DateUtils.get_quarter_start_date())
         else:
             st.warning("No checkin data available")
         
