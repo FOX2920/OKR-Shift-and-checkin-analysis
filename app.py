@@ -155,6 +155,40 @@ class UserManager:
 
         return users
 
+    def has_weekly_checkins(self, user_id, start_date=None, end_date=None):
+        """Kiểm tra xem user có check-in ít nhất 3 tuần trong khoảng thời gian đã chỉ định không."""
+        # Set default date range if not provided
+        if start_date is None:
+            start_date = get_current_quarter_start()
+        if end_date is None:
+            end_date = date.today()
+            
+        # Convert to datetime with timezone for comparison
+        start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+        
+        checkins = []
+        
+        # Thu thập tất cả các lần check-in của user từ checkin_df
+        if not self.checkin_df.empty and 'user_id' in self.checkin_df.columns and 'day' in self.checkin_df.columns:
+            user_checkins = self.checkin_df[self.checkin_df['user_id'].astype(str) == str(user_id)]
+            
+            for _, entry in user_checkins.iterrows():
+                checkin_date = datetime.fromtimestamp(float(entry.get('day')), tz=timezone.utc)
+                checkins.append(checkin_date)
+        
+        # Lọc ra các lần check-in trong khoảng thời gian đã chỉ định
+        checkins_in_range = [dt for dt in checkins if start_datetime <= dt <= end_datetime]
+        
+        if not checkins_in_range:
+            return False  # Không có check-in nào trong khoảng thời gian -> False
+        
+        # Lưu số tuần có check-in
+        weekly_checkins = set(dt.isocalendar()[1] for dt in checkins_in_range)
+        
+        # Kiểm tra xem user đã check-in ít nhất 3 tuần trong khoảng thời gian chưa
+        return len(weekly_checkins) >= 3
+
     def should_calculate_monthly_shift(self) -> bool:
         """Check if monthly shift should be calculated (not in months 1,4,7,10)"""
         current_month = datetime.now().month
