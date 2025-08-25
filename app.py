@@ -2759,7 +2759,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         progress_bar.empty()
         status_text.empty()
 
-def _get_email_recipients(analyzer, recipient_option: str, custom_emails: Optional[str]) -> List[str]:
+def _get_email_recipients(analyzer, recipient_option: str, custom_emails: Optional[str] = None) -> List[str]:
     """Get email recipients based on option"""
     if recipient_option == "all":
         recipients = get_email_list(analyzer)
@@ -2768,13 +2768,10 @@ def _get_email_recipients(analyzer, recipient_option: str, custom_emails: Option
             return []
     elif recipient_option == "special":
         recipients = get_default_recipients()
-    elif recipient_option == "custom":
-        if not custom_emails:
-            st.error("Please provide valid email addresses")
-            return []
-        recipients = [email.strip() for email in custom_emails.split(',') if email.strip()]
+    elif recipient_option == "okr_users":
+        recipients = get_emails_of_okr_users(analyzer)
         if not recipients:
-            st.error("Please provide valid email addresses")
+            st.error("No email addresses found for users with OKRs")
             return []
     else:
         st.error("Invalid recipient option")
@@ -2818,6 +2815,27 @@ def setup_sidebar_configuration():
             st.error("❌ Account Access Token: Missing")
         
         return goal_token, account_token
+
+def get_emails_of_okr_users(analyzer) -> List[str]:
+    """Get email list of users who have OKRs"""
+    try:
+        if analyzer.final_df is None or analyzer.filtered_members_df is None:
+            return []
+        
+        # Get users who have goals/OKRs
+        users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
+        
+        # Get emails of these users from filtered_members_df
+        okr_users_emails = []
+        for _, member in analyzer.filtered_members_df.iterrows():
+            if member['name'] in users_with_goals and pd.notna(member['email']) and member['email'].strip():
+                okr_users_emails.append(member['email'].strip())
+        
+        return okr_users_emails
+        
+    except Exception as e:
+        st.error(f"Error getting emails of OKR users: {e}")
+        return []
 
 def setup_cycle_selection(analyzer) -> Dict:
     """Setup cycle selection in sidebar"""
@@ -2883,26 +2901,18 @@ def setup_enhanced_email_configuration():
         # Recipient options
         recipient_option = st.radio(
             "Send emails to:",
-            ["special", "all", "custom"],
+            ["special", "all", "okr_users"],
             format_func=lambda x: {
                 "special": "Special recipients only (hoangta & xnk3)",
                 "all": "All filtered members",
-                "custom": "Custom email list"
+                "okr_users": "People with OKRs only"
             }[x]
         )
-        
-        # Custom emails input
-        custom_emails = None
-        if recipient_option == "custom":
-            custom_emails = st.text_area(
-                "Enter emails (comma-separated):",
-                placeholder="email1@company.com, email2@company.com"
-            )
         
         # Display recipient info
         _display_recipient_info(recipient_option)
         
-        return recipient_option, custom_emails
+        return recipient_option, None
 
 def _display_recipient_info(recipient_option: str):
     """Display recipient information"""
