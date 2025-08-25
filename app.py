@@ -208,6 +208,15 @@ class UserManager:
         last_day_previous_month = last_day_previous_month.replace(hour=23, minute=59, second=59)
         return last_day_previous_month
 
+    def calculate_scores(self):
+        """Calculate score for all users."""
+        for user in self.users.values():
+            user.calculate_score()
+
+    def get_users(self):
+        """Return list of all users."""
+        return list(self.users.values())
+
     def calculate_kr_shift_last_month(self, row, last_month_end):
         """Calculate kr_shift_last_month = kr_current_value - last_month_end_checkin_value"""
         try:
