@@ -524,7 +524,6 @@ class APIClient:
         all_krs = []
         
         for page in range(1, MAX_PAGES_KRS + 1):
-            st.text(f"Loading KRs... Page {page}")
             data = {"access_token": self.goal_token, "path": cycle_path, "page": page}
 
             response = self._make_request(url, data, f"loading KRs at page {page}")
