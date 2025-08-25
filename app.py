@@ -1604,6 +1604,134 @@ class EmailReportGenerator:
         except Exception as e:
             return False, f"Lỗi gửi email: {str(e)}"
 
+    def send_email_report_bulk(self, email_from, password, recipient_list, subject, html_content, 
+                              attach_excel=False, excel_buffer=None, excel_filename="okr_report.xlsx"):
+        """Send email report to multiple recipients with optional Excel attachment"""
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        special_recipients = ["hoangta@apluscorp.vn", "xnk3@apluscorp.vn"]
+        
+        try:
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(email_from, password)
+            
+            for email_to in recipient_list:
+                try:
+                    message = MIMEMultipart('related')
+                    message['From'] = f"OKR System A Plus <{email_from}>"
+                    message['To'] = email_to
+                    message['Subject'] = subject
+                    
+                    # Attach HTML content
+                    msg_alternative = MIMEMultipart('alternative')
+                    message.attach(msg_alternative)
+                    html_part = MIMEText(html_content, 'html', 'utf-8')
+                    msg_alternative.attach(html_part)
+                    
+                    # Attach Excel for special recipients
+                    if email_to in special_recipients and attach_excel and excel_buffer:
+                        excel_part = MIMEBase('application', 'octet-stream')
+                        excel_part.set_payload(excel_buffer.getvalue())
+                        encoders.encode_base64(excel_part)
+                        excel_part.add_header(
+                            'Content-Disposition',
+                            f'attachment; filename= {excel_filename}'
+                        )
+                        message.attach(excel_part)
+                    
+                    server.send_message(message)
+                    success_count += 1
+                    
+                except Exception as e:
+                    failed_count += 1
+                    errors.append(f"{email_to}: {str(e)}")
+            
+            server.quit()
+            
+            return True, f"Successfully sent {success_count} emails, {failed_count} failed", errors
+            
+        except Exception as e:
+            return False, f"Server connection error: {str(e)}", errors
+
+def get_email_list(analyzer):
+    """Get email list from filtered members"""
+    if analyzer.filtered_members_df is not None:
+        email_list = analyzer.filtered_members_df['email'].dropna().tolist()
+        return [email for email in email_list if email.strip()]
+    return []
+
+def get_default_recipients():
+    """Get default special recipients"""
+    return ["hoangta@apluscorp.vn", "xnk3@apluscorp.vn"]
+
+def send_email_report_enhanced(analyzer, email_generator, selected_cycle, email_from, email_password, 
+                              recipient_option, custom_emails=None):
+    """Enhanced email sending with bulk capability and Excel attachment"""
+    
+    st.header("📧 Sending Enhanced Email Report")
+    
+    # Determine recipient list
+    if recipient_option == "all":
+        recipients = get_email_list(analyzer)
+        if not recipients:
+            st.error("No email addresses found in member data")
+            return
+    elif recipient_option == "special":
+        recipients = get_default_recipients()
+    elif recipient_option == "custom":
+        recipients = [email.strip() for email in custom_emails.split(',') if email.strip()]
+        if not recipients:
+            st.error("Please provide valid email addresses")
+            return
+    
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        # Load data (existing logic)...
+        
+        # Create Excel file for special recipients
+        user_manager = create_user_manager_with_monthly_calculation(analyzer)
+        user_manager.update_checkins()
+        user_manager.update_okr_movement()
+        user_manager.calculate_scores()
+        users = user_manager.get_users()
+        
+        # Generate Excel
+        wb = export_to_excel(users)
+        excel_buffer = BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+        
+        # Send emails
+        success, message, errors = email_generator.send_email_report_bulk(
+            email_from, email_password, recipients, subject, html_content,
+            attach_excel=True, excel_buffer=excel_buffer,
+            excel_filename=f"okr_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+        
+        # Display results
+        if success:
+            st.success(f"✅ {message}")
+            st.info(f"📧 Sent to {len(recipients)} recipients")
+            st.info("📎 Excel attached for: hoangta@apluscorp.vn, xnk3@apluscorp.vn")
+            
+            if errors:
+                st.warning("⚠️ Some emails failed:")
+                for error in errors:
+                    st.text(f"- {error}")
+        else:
+            st.error(f"❌ {message}")
+            
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
+    finally:
+        progress_bar.empty()
+        status_text.empty()
 class OKRAnalysisSystem:
     """Main OKR Analysis System combining all components"""
 
@@ -3074,21 +3202,58 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         if custom_email.strip():
             email_to = custom_email.strip()
 
+    # Trong sidebar
+    with st.sidebar:
+        st.subheader("📧 Enhanced Email Settings")
+        
+        # Email recipient options
+        recipient_option = st.radio(
+            "Send emails to:",
+            ["special", "all", "custom"],
+            format_func=lambda x: {
+                "special": "Special recipients only (hoangta & xnk3)",
+                "all": "All filtered members",
+                "custom": "Custom email list"
+            }[x]
+        )
+        
+        # Custom email input
+        if recipient_option == "custom":
+            custom_emails = st.text_area(
+                "Enter emails (comma-separated):",
+                placeholder="email1@company.com, email2@company.com"
+            )
+        else:
+            custom_emails = None
+        
+        # Show recipient count
+        if recipient_option == "all":
+            try:
+                total_emails = len(get_email_list(analyzer))
+                st.info(f"📊 Will send to {total_emails} members")
+            except:
+                st.info("📊 Email count will be calculated during send")
+        elif recipient_option == "special":
+            st.info("📊 Will send to 2 special recipients with Excel attachment")
+        
+        # Excel attachment info
+        st.info("📎 Excel attachment will be included for:\n- hoangta@apluscorp.vn\n- xnk3@apluscorp.vn")
+
     # Main analysis
     col1, col2 = st.columns(2)
     
     with col1:
         analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
     
+    # Trong main function, thay thế email button logic
     with col2:
-        email_button = st.button("📧 Send Email Report", type="secondary", use_container_width=True)
-
+        email_button = st.button("📧 Send Enhanced Email Report", type="secondary", use_container_width=True)
+    
+    if email_button:
+        send_email_report_enhanced(analyzer, email_generator, selected_cycle, 
+                                  email_from, email_password, recipient_option, custom_emails)
     if analyze_button:
         run_analysis(analyzer, selected_cycle, show_missing_analysis)
-
-    # Send email report
-    if email_button:
-        send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
 if __name__ == "__main__":
     main()
