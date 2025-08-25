@@ -140,6 +140,21 @@ class UserManager:
         # Create users list
         self.users = self.create_users()
 
+    def create_users(self):
+        """Create User list from KRs data, only for users in account."""
+        users = {}
+        unique_user_ids = set()
+
+        if not self.krs_df.empty and 'user_id' in self.krs_df.columns:
+            for _, kr in self.krs_df.iterrows():
+                user_id = str(kr.get("user_id"))
+                if user_id and user_id not in unique_user_ids and user_id in self.user_name_map:
+                    name = self.user_name_map[user_id]
+                    users[user_id] = User(user_id, name)
+                    unique_user_ids.add(user_id)
+
+        return users
+
     def should_calculate_monthly_shift(self) -> bool:
         """Check if monthly shift should be calculated (not in months 1,4,7,10)"""
         current_month = datetime.now().month
@@ -2133,7 +2148,169 @@ class OKRAnalysisSystem:
             st.error(f"Error calculating monthly OKR shifts: {e}")
             return []
 
+
+
 # ==================== STREAMLIT UI FUNCTIONS ====================
+
+# Function to generate data table
+def generate_data_table(users):
+    # Create a DataFrame from users
+    data = []
+    for user in users:
+        data.append({
+            "Name": user.name,
+            "Has OKR": "Yes" if user.co_OKR == 1 else "No",
+            "Check-in": "Yes" if user.checkin == 1 else "No",
+            "OKR Movement": user.dich_chuyen_OKR,
+            "Score": user.score
+        })
+    
+    df = pd.DataFrame(data)
+    return df
+
+# Add this function to your file
+def export_to_excel(users, filename="output1.xlsx"):
+    """
+    Xuất dữ liệu OKRs của danh sách users ra file Excel với giao diện được cải tiến.
+
+    Yêu cầu:
+      - Mỗi user phải có các thuộc tính: name, co_OKR, checkin, dich_chuyen_OKR, score
+    """
+    # Tạo workbook và sheet
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "OKRs"
+
+    # Định nghĩa style
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    category_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    category_font = Font(bold=True)
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+
+    # --- Tiêu đề chính ---
+    total_columns = 3 + len(users)  # 3 cột cố định + số user
+    last_col_letter = get_column_letter(total_columns)
+    ws.merge_cells(f"A1:{last_col_letter}1")
+    title_cell = ws["A1"]
+    title_cell.value = "ĐÁNH GIÁ OKRs THÁNG"
+    title_cell.font = Font(size=14, bold=True)
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # --- Header (dòng 2) ---
+    fixed_headers = ["TT", "Nội dung", "Tự chấm điểm"]
+    user_headers = [user.name for user in users]
+    headers = fixed_headers + user_headers
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+        # Đặt độ rộng mặc định cho các cột
+        col_letter = get_column_letter(col_idx)
+        if col_idx == 2:
+            ws.column_dimensions[col_letter].width = 70  # Nội dung dài hơn
+        elif col_idx == 1:
+            ws.column_dimensions[col_letter].width = 5
+        else:
+            ws.column_dimensions[col_letter].width = 15
+
+    # --- Các dòng tiêu chí (bắt đầu từ dòng 3) ---
+    criteria = [
+        [1, "Đầy đủ OKRs cá nhân được cập nhật trên Base Goal (Mục tiêu cá nhân + Đường dẫn)", 1],
+        [2, "Có Check-in trên base hàng tuần (Mỗi tuần ít nhất 1 lần check-in)", 0.5],
+        [3, "Có check-in với người khác, cấp quản lý, làm việc chung OKRs trong bộ phận", 0.5],
+        [4, "Tổng OKRs dịch chuyển trong tháng (so với tháng trước):", ""],
+        ["", "Nhỏ hơn 10%", 0.15],
+        ["", "Từ 10 - 25%", 0.25],
+        ["", "Từ 26 - 30%", 0.5],
+        ["", "Từ 31 - 50%", 0.75],
+        ["", "Từ 51 - 80%", 1.25],
+        ["", "Từ 81% - 99%", 1.5],
+        ["", "100% hoặc có đột phá lớn", 2.5],
+        [5, "Tổng cộng OKRs", ""]
+    ]
+    start_row = 3
+    for i, row_data in enumerate(criteria):
+        row_idx = start_row + i
+        for col_idx, value in enumerate(row_data, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+            # Đánh dấu cột loại (nếu giá trị đầu tiên là số thứ tự) với màu nền và in đậm
+            if col_idx == 1 and isinstance(value, int):
+                cell.fill = category_fill
+                cell.font = category_font
+
+    # --- Ghi dữ liệu của từng user ---
+    # Các user sẽ được hiển thị từ cột 4 trở đi
+    for idx, user in enumerate(users, start=1):
+        col_idx = 3 + idx  # cột thứ 1-3 đã dành cho tiêu đề cố định
+        col_letter = get_column_letter(col_idx)
+        # 1. Đánh giá OKRs cá nhân (dòng 3)
+        ws.cell(row=3, column=col_idx, value=1 if user.co_OKR == 1 else 0)
+        # 2. Check-in hàng tuần (dòng 4)
+        ws.cell(row=4, column=col_idx, value=0.5 if user.checkin == 1 else 0)
+        # 3. Check-in với người khác (dòng 5)
+        ws.cell(row=5, column=col_idx, value=0.5 )
+
+        # 4. Dịch chuyển OKR:
+        # Dòng 6 hiển thị % dịch chuyển, các dòng từ 7 đến 13 hiển thị điểm tương ứng
+        movement = user.dich_chuyen_OKR
+        ws.cell(row=6, column=col_idx, value=f"{movement}%")
+
+        # Xác định điểm dịch chuyển dựa theo % và dòng ghi điểm:
+        if movement < 10:
+            score_value = 0.15
+            movement_row = 7
+        elif movement < 26:
+            score_value = 0.25
+            movement_row = 8
+        elif movement < 31:
+            score_value = 0.5
+            movement_row = 9
+        elif movement < 51:
+            score_value = 0.75
+            movement_row = 10
+        elif movement < 81:
+            score_value = 1.25
+            movement_row = 11
+        elif movement < 100:
+            score_value = 1.5
+            movement_row = 12
+        else:
+            score_value = 2.5
+            movement_row = 13
+        ws.cell(row=movement_row, column=col_idx, value=score_value)
+
+        # 5. Tổng điểm: sử dụng công thức SUM từ dòng 3 đến dòng 13
+        formula = user.score
+        ws.cell(row=14, column=col_idx, value=formula)
+
+        # Áp dụng border và căn giữa cho các ô dữ liệu của user
+        for r in range(3, 15):
+            cell = ws.cell(row=r, column=col_idx)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+
+    # --- Freeze panes để cố định header và tiêu chí ---
+    ws.freeze_panes = ws["D3"]
+
+    # --- Tự động điều chỉnh độ rộng cột (nếu cần) ---
+    # Vòng lặp qua các cột để tính độ rộng dựa trên nội dung
+    for col in ws.columns:
+        max_length = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        adjusted_width = max_length + 2
+        ws.column_dimensions[col_letter].width = adjusted_width
+
+    # Return the workbook object
+    return wb
+
 
 def show_data_summary(df, analyzer):
     """Show data summary statistics"""
