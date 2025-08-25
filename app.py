@@ -555,7 +555,6 @@ class APIClient:
         all_checkins = []
         
         for page in range(1, MAX_PAGES_CHECKINS + 1):
-            st.text(f"Loading checkins... Page {page}")
             data = {"access_token": self.goal_token, "path": cycle_path, "page": page}
 
             response = self._make_request(url, data, f"loading checkins at page {page}")
