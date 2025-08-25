@@ -20,14 +20,9 @@ import base64
 from io import BytesIO
 import plotly.io as pio
 import io
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib
 
 # Configuration
 warnings.filterwarnings('ignore')
-matplotlib.use('Agg')
 
 # Streamlit configuration
 st.set_page_config(
@@ -460,308 +455,6 @@ class OKRCalculator:
         except Exception as e:
             st.warning(f"Error calculating kr_shift_last_friday: {e}")
             return 0
-
-class PDFReportGenerator:
-    """Generate PDF reports for OKR analysis using matplotlib"""
-    
-    def __init__(self):
-        plt.rcParams['font.family'] = ['DejaVu Sans', 'Arial Unicode MS', 'SimHei', 'sans-serif']
-        plt.rcParams['font.size'] = 9
-        plt.rcParams['axes.unicode_minus'] = False
-        
-    def create_pdf_report(self, analyzer, selected_cycle, members_without_goals, members_without_checkins, 
-                         members_with_goals_no_checkins, okr_shifts):
-        """Create comprehensive PDF report using matplotlib"""
-        
-        buffer = io.BytesIO()
-        
-        with PdfPages(buffer) as pdf:
-            self._create_title_page(pdf, selected_cycle, analyzer, members_without_goals, 
-                                  members_without_checkins, members_with_goals_no_checkins, okr_shifts)
-            self._create_charts_page(pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts)
-            self._create_tables_page(pdf, members_without_goals, members_without_checkins, okr_shifts)
-            self._create_checkin_page(pdf, analyzer)
-        
-        buffer.seek(0)
-        return buffer
-    
-    def _create_title_page(self, pdf, selected_cycle, analyzer, members_without_goals, 
-                          members_without_checkins, members_with_goals_no_checkins, okr_shifts):
-        """Create title page with summary statistics"""
-        
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 14)
-        ax.axis('off')
-        
-        current_date = datetime.now().strftime("%d/%m/%Y")
-        
-        # Title section
-        y_pos = 13.2
-        ax.text(5, y_pos, 'BÁO CÁO TIẾN ĐỘ OKR & CHECKIN', 
-                fontsize=18, fontweight='bold', ha='center', color='#2c3e50')
-        
-        y_pos -= 0.5
-        ax.text(5, y_pos, f'{selected_cycle["name"]}', 
-                fontsize=14, fontweight='bold', ha='center', color='#3498db')
-        
-        y_pos -= 0.4
-        ax.text(5, y_pos, f'Ngày báo cáo: {current_date}', 
-                fontsize=11, ha='center', color='#7f8c8d')
-        
-        # Add line separator
-        y_pos -= 0.3
-        ax.plot([1, 9], [y_pos, y_pos], color='#3498db', linewidth=2)
-        
-        # Summary statistics
-        total_members = len(analyzer.filtered_members_df) if analyzer.filtered_members_df is not None else 0
-        members_with_goals = total_members - len(members_without_goals)
-        members_with_checkins = total_members - len(members_without_checkins)
-        
-        progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0]) if okr_shifts else 0
-        stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0]) if okr_shifts else 0
-        issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0]) if okr_shifts else 0
-        
-        # Create summary boxes
-        y_pos -= 0.6
-        box_height = 1.2
-        box_width = 7
-        
-        summary_data = [
-            ('TỔNG QUAN', '#3498db', [
-                f'Tổng nhân viên: {total_members}',
-                f'Có OKR: {members_with_goals} ({(members_with_goals/total_members*100):.1f}%)' if total_members > 0 else 'Có OKR: 0',
-                f'Có Checkin: {members_with_checkins} ({(members_with_checkins/total_members*100):.1f}%)' if total_members > 0 else 'Có Checkin: 0'
-            ]),
-            ('PHÂN TÍCH TIẾN ĐỘ', '#27AE60', [
-                f'Nhân viên tiến bộ: {progress_users}',
-                f'Nhân viên ổn định: {stable_users}',
-                f'Nhân viên cần hỗ trợ: {issue_users}'
-            ])
-        ]
-        
-        for title, color, items in summary_data:
-            rect = patches.Rectangle((1.5, y_pos - box_height), box_width, box_height, 
-                                   linewidth=2, edgecolor=color, facecolor=color, alpha=0.1)
-            ax.add_patch(rect)
-            
-            ax.text(5, y_pos - 0.25, title, fontsize=13, fontweight='bold', 
-                   ha='center', color=color)
-            
-            for i, item in enumerate(items):
-                ax.text(2, y_pos - 0.6 - (i * 0.2), f'• {item}', fontsize=10, color='#2c3e50')
-            
-            y_pos -= 2.4
-        
-        # Key insights box
-        insights_y = y_pos - 0.2
-        rect = patches.Rectangle((1.5, insights_y - 2.2), box_width, 2.0, 
-                               linewidth=2, edgecolor='#e74c3c', facecolor='#e74c3c', alpha=0.1)
-        ax.add_patch(rect)
-        
-        ax.text(5, insights_y - 0.25, 'ĐIỂM CẦN QUAN TÂM', fontsize=13, fontweight='bold', 
-               ha='center', color='#e74c3c')
-        
-        insights = [
-            f'Nhân viên chưa có OKR: {len(members_without_goals)} người',
-            f'Nhân viên chưa checkin: {len(members_without_checkins)} người',
-            f'Có OKR nhưng chưa checkin: {len(members_with_goals_no_checkins)} người'
-        ]
-        
-        for i, insight in enumerate(insights):
-            ax.text(2, insights_y - 0.8 - (i * 0.3), f'⚠️ {insight}', fontsize=10, color='#e74c3c')
-        
-        # Footer
-        ax.text(5, 1.2, 'A Plus Mineral Material Corporation', 
-                fontsize=13, fontweight='bold', ha='center', color='#2c3e50')
-        ax.text(5, 0.8, 'Báo cáo được tạo tự động bởi hệ thống OKR Analysis', 
-                fontsize=9, ha='center', color='#7f8c8d')
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def _create_charts_page(self, pdf, analyzer, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with charts and visualizations"""
-        
-        fig = plt.figure(figsize=(8.27, 11.69))
-        fig.suptitle('BIỂU ĐỒ PHÂN TÍCH', fontsize=16, fontweight='bold', y=0.95, color='#2c3e50')
-        
-        # Chart 1: Progress Distribution
-        ax1 = plt.subplot(2, 1, 1)
-        if okr_shifts:
-            progress_users = len([u for u in okr_shifts if u['okr_shift'] > 0])
-            stable_users = len([u for u in okr_shifts if u['okr_shift'] == 0])
-            issue_users = len([u for u in okr_shifts if u['okr_shift'] < 0])
-            
-            sizes = [progress_users, stable_users, issue_users]
-            labels = ['Tiến bộ', 'Ổn định', 'Cần hỗ trợ']
-            colors = ['#27AE60', '#F39C12', '#E74C3C']
-            
-            non_zero_data = [(size, label, color) for size, label, color in zip(sizes, labels, colors) if size > 0]
-            if non_zero_data:
-                sizes, labels, colors = zip(*non_zero_data)
-                wedges, texts, autotexts = ax1.pie(sizes, labels=labels, autopct='%1.1f%%', 
-                                                 colors=colors, startangle=90)
-                ax1.set_title('Phân bố tiến độ nhân viên', fontsize=13, fontweight='bold', pad=20)
-                
-                for text in texts:
-                    text.set_fontsize(11)
-                for autotext in autotexts:
-                    autotext.set_fontsize(10)
-                    autotext.set_color('white')
-                    autotext.set_weight('bold')
-        
-        # Chart 2: OKR Shifts Bar Chart
-        ax2 = plt.subplot(2, 1, 2)
-        if okr_shifts:
-            top_shifts = okr_shifts[:15]
-            names = [u['user_name'] for u in top_shifts]
-            values = [u['okr_shift'] for u in top_shifts]
-            
-            colors = ['#27AE60' if v > 0 else '#E74C3C' if v < 0 else '#F39C12' for v in values]
-            
-            bars = ax2.bar(range(len(names)), values, color=colors)
-            ax2.set_xticks(range(len(names)))
-            ax2.set_xticklabels(names, rotation=45, ha='right', fontsize=9)
-            ax2.set_title('Dịch chuyển OKR (Top 15)', fontsize=13, fontweight='bold', pad=20)
-            ax2.set_ylabel('Dịch chuyển OKR', fontsize=10)
-            ax2.grid(True, alpha=0.3)
-            
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax2.text(bar.get_x() + bar.get_width()/2., 
-                        height + (0.02 if height >= 0 else -0.08),
-                        f'{value:.2f}', ha='center', 
-                        va='bottom' if height >= 0 else 'top', fontsize=8)
-        
-        plt.tight_layout(rect=[0, 0.02, 1, 0.92])
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def _create_tables_page(self, pdf, members_without_goals, members_without_checkins, okr_shifts):
-        """Create page with detailed tables"""
-        
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 14)
-        ax.axis('off')
-        
-        y_pos = 13.5
-        
-        ax.text(5, y_pos, 'CHI TIẾT PHÂN TÍCH', fontsize=15, fontweight='bold', 
-               ha='center', color='#2c3e50')
-        y_pos -= 0.8
-        
-        # Members without goals
-        if members_without_goals and y_pos > 6:
-            ax.text(0.5, y_pos, f'NHÂN VIÊN CHƯA CÓ OKR ({len(members_without_goals)} người)', 
-                   fontsize=11, fontweight='bold', color='#e74c3c')
-            y_pos -= 0.5
-            
-            # Table header
-            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
-            ax.text(1.5, y_pos, 'Tên', fontsize=9, fontweight='bold')
-            ax.text(4, y_pos, 'Username', fontsize=9, fontweight='bold')
-            ax.text(6.5, y_pos, 'Chức vụ', fontsize=9, fontweight='bold')
-            
-            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-            y_pos -= 0.4
-            
-            # Table rows
-            for i, member in enumerate(members_without_goals[:12], 1):
-                if y_pos < 6:
-                    break
-                ax.text(0.5, y_pos, str(i), fontsize=8)
-                ax.text(1.5, y_pos, member.get('name', '')[:18], fontsize=8)
-                ax.text(4, y_pos, member.get('username', ''), fontsize=8)
-                ax.text(6.5, y_pos, member.get('job', '')[:20], fontsize=8)
-                y_pos -= 0.3
-            
-            if len(members_without_goals) > 12:
-                ax.text(0.5, y_pos, f'... và {len(members_without_goals) - 12} nhân viên khác', 
-                       fontsize=8, style='italic', color='#7f8c8d')
-                y_pos -= 0.4
-            
-            y_pos -= 0.6
-        
-        # Top performers section
-        if okr_shifts and y_pos > 3:
-            top_performers = [u for u in okr_shifts if u['okr_shift'] > 0][:8]
-            if top_performers:
-                ax.text(0.5, y_pos, f'TOP NHÂN VIÊN TIẾN BỘ ({len(top_performers)} người)', 
-                       fontsize=11, fontweight='bold', color='#27AE60')
-                y_pos -= 0.5
-                
-                # Table header
-                ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
-                ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
-                ax.text(4.5, y_pos, 'Dịch chuyển', fontsize=9, fontweight='bold')
-                ax.text(6.5, y_pos, 'Hiện tại', fontsize=9, fontweight='bold')
-                ax.text(8, y_pos, 'Trước đó', fontsize=9, fontweight='bold')
-                
-                ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-                y_pos -= 0.4
-                
-                # Table rows
-                for i, user in enumerate(top_performers, 1):
-                    if y_pos < 1:
-                        break
-                    ax.text(0.5, y_pos, str(i), fontsize=8)
-                    ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)
-                    ax.text(4.5, y_pos, f"{user['okr_shift']:.2f}", fontsize=8, color='#27AE60')
-                    ax.text(6.5, y_pos, f"{user['current_value']:.2f}", fontsize=8)
-                    ax.text(8, y_pos, f"{user['last_friday_value']:.2f}", fontsize=8)
-                    y_pos -= 0.3
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-    
-    def _create_checkin_page(self, pdf, analyzer):
-        """Create page with checkin analysis"""
-        
-        period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
-        
-        fig, ax = plt.subplots(figsize=(8.27, 11.69))
-        ax.set_xlim(0, 10)
-        ax.set_ylim(0, 14)
-        ax.axis('off')
-        
-        y_pos = 13.5
-        
-        ax.text(5, y_pos, 'PHÂN TÍCH HOẠT ĐỘNG CHECKIN', fontsize=15, fontweight='bold', 
-               ha='center', color='#2c3e50')
-        y_pos -= 1
-        
-        if overall_checkins:
-            ax.text(0.5, y_pos, f'TOP NHÂN VIÊN HOẠT ĐỘNG NHẤT ({min(len(overall_checkins), 15)} người)', 
-                   fontsize=11, fontweight='bold', color='#3498db')
-            y_pos -= 0.5
-            
-            # Table header
-            ax.text(0.5, y_pos, 'STT', fontsize=9, fontweight='bold')
-            ax.text(1.5, y_pos, 'Nhân viên', fontsize=9, fontweight='bold')
-            ax.text(4.5, y_pos, 'Tổng checkin', fontsize=9, fontweight='bold')
-            ax.text(6.5, y_pos, 'Tần suất/tuần', fontsize=9, fontweight='bold')
-            ax.text(8.5, y_pos, 'Tuần trước', fontsize=9, fontweight='bold')
-            
-            ax.plot([0.5, 9.5], [y_pos - 0.1, y_pos - 0.1], color='#2c3e50', linewidth=1)
-            y_pos -= 0.4
-            
-            # Table rows
-            for i, user in enumerate(overall_checkins[:15], 1):
-                if y_pos < 1:
-                    break
-                ax.text(0.5, y_pos, str(i), fontsize=8)
-                ax.text(1.5, y_pos, user['user_name'][:18], fontsize=8)
-                ax.text(4.5, y_pos, str(user.get('total_checkins', 0)), fontsize=8)
-                ax.text(6.5, y_pos, f"{user.get('checkin_frequency_per_week', 0):.2f}", fontsize=8)
-                ax.text(8.5, y_pos, str(user.get('last_week_checkins', 0)), fontsize=8)
-                y_pos -= 0.3
-        else:
-            ax.text(5, y_pos, 'Không có dữ liệu checkin', fontsize=11, ha='center', color='#7f8c8d')
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
 
 class EmailReportGenerator:
     """Generate and send email reports for OKR analysis"""
@@ -1362,48 +1055,6 @@ class EmailReportGenerator:
             server.quit()
             
             return True, "Email sent successfully!"
-            
-        except smtplib.SMTPAuthenticationError:
-            return False, "Lỗi xác thực: Vui lòng kiểm tra lại email và mật khẩu"
-        except Exception as e:
-            return False, f"Lỗi gửi email: {str(e)}"
-
-    def send_email_with_pdf_report(self, email_from, password, email_to, subject, html_content, 
-                                  pdf_buffer, company_name="A Plus Mineral Material Corporation"):
-        """Send email report with PDF attachment"""
-        try:
-            message = MIMEMultipart('mixed')
-            message['From'] = f"OKR System {company_name} <{email_from}>"
-            message['To'] = email_to
-            message['Subject'] = subject
-            
-            msg_alternative = MIMEMultipart('alternative')
-            
-            html_part = MIMEText(html_content, 'html', 'utf-8')
-            msg_alternative.attach(html_part)
-            
-            message.attach(msg_alternative)
-            
-            if pdf_buffer:
-                pdf_attachment = MIMEBase('application', 'pdf')
-                pdf_attachment.set_payload(pdf_buffer.getvalue())
-                encoders.encode_base64(pdf_attachment)
-                
-                pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                pdf_attachment.add_header(
-                    'Content-Disposition',
-                    f'attachment; filename="{pdf_filename}"'
-                )
-                message.attach(pdf_attachment)
-            
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(email_from, password)
-            
-            server.send_message(message)
-            server.quit()
-            
-            return True, "Email with PDF report sent successfully!"
             
         except smtplib.SMTPAuthenticationError:
             return False, "Lỗi xác thực: Vui lòng kiểm tra lại email và mật khẩu"
@@ -2563,10 +2214,10 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
         progress_bar.empty()
         status_text.empty()
 
-def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
-    """Send email report with PDF attachment including monthly data when applicable"""
+def send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to):
+    """Send email report including monthly data when applicable"""
     
-    st.header("📧 Sending Email Report with PDF")
+    st.header("📧 Sending Email Report")
     
     # Progress tracking
     progress_bar = st.progress(0)
@@ -2597,25 +2248,17 @@ def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_
             update_progress("Calculating monthly OKR shifts...", 0.55)
             okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly()
         
-        update_progress("Creating PDF report...", 0.7)
-        # Create PDF report with monthly data
-        pdf_generator = PDFReportGenerator()
-        pdf_buffer = pdf_generator.create_pdf_report(
-            analyzer, selected_cycle, members_without_goals, members_without_checkins,
-            members_with_goals_no_checkins, okr_shifts, okr_shifts_monthly
-        )
-        
-        update_progress("Creating email content...", 0.8)
+        update_progress("Creating email content...", 0.7)
         html_content = email_generator.create_email_content(
             analyzer, selected_cycle, members_without_goals, members_without_checkins,
             members_with_goals_no_checkins, okr_shifts, okr_shifts_monthly
         )
         
-        update_progress("Sending email with PDF attachment...", 0.9)
+        update_progress("Sending email...", 0.9)
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
-        success, message = email_generator.send_email_with_pdf_report(
-            email_from, email_password, email_to, subject, html_content, pdf_buffer
+        success, message = email_generator.send_email_report(
+            email_from, email_password, email_to, subject, html_content
         )
         
         progress_bar.empty()
@@ -2624,26 +2267,12 @@ def send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_
         if success:
             st.success(f"✅ {message}")
             monthly_note = " (bao gồm phân tích tháng)" if okr_shifts_monthly else ""
-            st.info(f"📧 Email report with PDF attachment sent to: {email_to}{monthly_note}")
+            st.info(f"📧 Email report sent to: {email_to}{monthly_note}")
             
-            # Show email preview and PDF download option
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.checkbox("📋 Show email preview", value=False):
-                    st.subheader("Email Preview")
-                    st.components.v1.html(html_content, height=600, scrolling=True)
-            
-            with col2:
-                if pdf_buffer:
-                    pdf_filename = f"OKR_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                    st.download_button(
-                        label="📥 Download PDF Report",
-                        data=pdf_buffer.getvalue(),
-                        file_name=pdf_filename,
-                        mime="application/pdf",
-                        key="download_pdf_report"
-                    )
+            # Show email preview
+            if st.checkbox("📋 Show email preview", value=False):
+                st.subheader("Email Preview")
+                st.components.v1.html(html_content, height=600, scrolling=True)
         else:
             st.error(f"❌ {message}")
             
@@ -2749,7 +2378,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
 
     # Send email report
     if email_button:
-        send_email_report_with_pdf(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
+        send_email_report(analyzer, email_generator, selected_cycle, email_from, email_password, email_to)
 
 if __name__ == "__main__":
     main()
