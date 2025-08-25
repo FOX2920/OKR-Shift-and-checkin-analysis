@@ -155,6 +155,12 @@ class UserManager:
 
         return users
 
+    def update_checkins(self, start_date=None, end_date=None):
+        """Check and update check-in status for each user."""
+        for user in self.users.values():
+            if self.has_weekly_checkins(user.user_id, start_date, end_date):
+                user.checkin = 1
+
     def has_weekly_checkins(self, user_id, start_date=None, end_date=None):
         """Kiểm tra xem user có check-in ít nhất 3 tuần trong khoảng thời gian đã chỉ định không."""
         # Set default date range if not provided
