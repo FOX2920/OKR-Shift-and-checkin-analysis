@@ -2521,7 +2521,7 @@ def run_analysis(analyzer, selected_cycle, show_missing_analysis):
             okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
         if okr_shifts:
-            show_okr_analysis(okr_shifts, analyzer.get_last_friday_date(), "weekly")
+            show_okr_analysis(okr_shifts, DateUtils.get_last_friday_date(), "weekly")
         else:
             st.warning("No weekly OKR shift data available")
         
