@@ -1788,7 +1788,8 @@ class OKRAnalysisSystem:
                 return kr_current_value  # If no KR ID, shift = current value
             
             # Filter data for this specific KR and find checkins within range
-            quarter_start = self.get_quarter_start_date()
+            # FIX: Use DateUtils.get_quarter_start_date() instead of self.get_quarter_start_date()
+            quarter_start = DateUtils.get_quarter_start_date()
             
             # Important: Use the reference month end as the cutoff
             reference_month_end = self.get_last_month_end_date()
