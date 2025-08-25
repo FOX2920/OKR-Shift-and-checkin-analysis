@@ -1971,8 +1971,8 @@ class OKRAnalysisSystem:
                 # Calculate final_okr_goal_shift_monthly using reference month end
                 final_okr_goal_shift_monthly = self.calculate_final_okr_goal_shift_monthly(user_df)
                 
-                # Calculate current and last month values for comparison/legacy
-                current_value = self.calculate_current_value(user_df)
+                # FIX: Use self.okr_calculator.calculate_current_value() instead of self.calculate_current_value()
+                current_value = self.okr_calculator.calculate_current_value(user_df)
                 last_month_value, kr_details = self.calculate_last_month_value(reference_month_end, user_df)
                 legacy_okr_shift = current_value - last_month_value
     
