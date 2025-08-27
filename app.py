@@ -2145,7 +2145,7 @@ def get_email_list(analyzer) -> List[str]:
 
 def get_default_recipients() -> List[str]:
     """Get default special recipients"""
-    return ["xnk3@apluscorp.vn"]
+    return ["tts122403@gmail.com"]
 
 
 # ==================== STREAMLIT UI FUNCTIONS ====================
@@ -3172,7 +3172,7 @@ def setup_enhanced_email_configuration(analyzer):
             "Send emails to:",
             ["all_with_goals", "special", "all", "okr_users"],
             format_func=lambda x: {
-                "special": "Special recipients only (xnk3)",
+                "special": "Special recipients only (tts122403@gmail.com)",
                 "all": "All filtered members",
                 "all_with_goals": "All members with goals (default - with Excel)",
                 "okr_users": "People with OKRs (legacy option)"
