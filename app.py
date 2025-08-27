@@ -2098,7 +2098,7 @@ def get_email_list(analyzer) -> List[str]:
 
 def get_default_recipients() -> List[str]:
     """Get default special recipients"""
-    return ["hoangta@apluscorp.vn", "xnk3@apluscorp.vn"]
+    return ["xnk3@apluscorp.vn"]
 
 
 # ==================== STREAMLIT UI FUNCTIONS ====================
@@ -3084,28 +3084,7 @@ def setup_analysis_options():
         st.subheader("📊 Analysis Options")
         return st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
 
-def setup_email_configuration():
-    """Setup email configuration in sidebar"""
-    with st.sidebar:
-        st.subheader("📧 Email Report Settings")
-        
-        # Pre-configured settings
-        email_config = {
-            'email_from': "apluscorp.hr@gmail.com",
-            'email_password': 'mems nctq yxss gruw',
-            'email_to': "xnk3@apluscorp.vn"
-        }
-        
-        st.info("📧 Email settings are pre-configured")
-        st.text(f"From: {email_config['email_from']}")
-        st.text(f"To: {email_config['email_to']}")
-        
-        # Custom recipient option
-        custom_email = st.text_input("Custom recipient (optional):", placeholder="email@example.com")
-        if custom_email.strip():
-            email_config['email_to'] = custom_email.strip()
-        
-        return email_config
+
 
 def setup_enhanced_email_configuration(analyzer):
     """Setup enhanced email configuration in sidebar"""
@@ -3117,7 +3096,7 @@ def setup_enhanced_email_configuration(analyzer):
             "Send emails to:",
             ["all_with_goals", "special", "all", "okr_users"],
             format_func=lambda x: {
-                "special": "Special recipients only (hoangta & xnk3)",
+                "special": "Special recipients only (xnk3)",
                 "all": "All filtered members",
                 "all_with_goals": "All members with goals (default - with Excel)",
                 "okr_users": "People with OKRs (legacy option)"
@@ -3139,7 +3118,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
         else:
             st.info("📊 Will send to all filtered members")
     elif recipient_option == "special":
-        st.info("📊 Will send to 2 special recipients with Excel attachment")
+        st.info("📊 Will send to 1 special recipient with Excel attachment")
     elif recipient_option == "all_with_goals":
         if analyzer:
             try:
@@ -3210,7 +3189,6 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         return
     
     show_missing_analysis = setup_analysis_options()
-    email_config = setup_email_configuration()
     recipient_option, custom_emails = setup_enhanced_email_configuration(analyzer)
 
     # Auto-run analysis để đảm bảo data được load
@@ -3241,7 +3219,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     if email_button:
         send_email_report_enhanced(
             analyzer, email_generator, selected_cycle, 
-            email_config['email_from'], email_config['email_password'], 
+            "apluscorp.hr@gmail.com", 'mems nctq yxss gruw', 
             recipient_option, custom_emails
         )
 
