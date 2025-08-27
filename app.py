@@ -1023,7 +1023,7 @@ class EmailReportGenerator:
         
         return f"""
         <tr style='background: linear-gradient(135deg, #e8f4f8, #f0f8ff); border-top: 2px solid #3498db; font-weight: bold;'>
-            <td colspan="2" style='text-align: center; color: #2c3e50;'>📊 TỔNG KẾT TOP {len(data)}</td>
+            <td colspan="2" style='text-align: center; color: #2c3e50;'>📊 TỔNG KẾT TẤT CẢ {len(data)} NHÂN VIÊN</td>
             <td style='text-align: center; color: #3498db;'>{total_checkins_sum}</td>
             <td style='text-align: center; color: #27AE60;'>{avg_frequency:.2f}</td>
             <td style='text-align: center; color: #e74c3c;'>{active_last_week} người</td>
@@ -1896,52 +1896,22 @@ class OKRAnalysisSystem:
 def create_user_manager_with_monthly_calculation(analyzer):
     """Create UserManager integrated with monthly OKR calculation from OKRAnalysisSystem"""
     
-    # Chỉ tạo account_df cho users thực sự có OKR data để đồng nhất với OKR shifts analysis
-    if analyzer.final_df is not None and not analyzer.final_df.empty:
-        # Lấy tất cả unique users có OKR data từ final_df
-        users_with_okr_data = set(analyzer.final_df['goal_user_name'].dropna().unique())
+    # Lấy TẤT CẢ filtered members làm base, bao gồm cả có OKR và không có OKR
+    if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+        # Sử dụng tất cả filtered_members_df làm account_df
+        account_df = analyzer.filtered_members_df.copy()
         
-        # Tạo account_df chỉ từ users có OKR data
-        if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
-            # Lọc filtered_members_df để chỉ lấy users có OKR data
-            account_df = analyzer.filtered_members_df[
-                analyzer.filtered_members_df['name'].isin(users_with_okr_data)
-            ].copy()
-            
-            # Nếu có users có OKR data nhưng không có trong filtered_members_df, tạo record cơ bản
-            existing_names = set(account_df['name'].dropna().unique()) if not account_df.empty and 'name' in account_df.columns else set()
-            missing_users = users_with_okr_data - existing_names
-            
-            if missing_users:
-                missing_records = []
-                for user_name in missing_users:
-                    # Lấy thông tin từ final_df
-                    user_data = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].iloc[0]
-                    missing_records.append({
-                        'name': user_name,
-                        'username': user_data.get('goal_user_username', user_name.lower()),
-                        'email': f"{user_data.get('goal_user_username', user_name.lower())}@company.com",
-                        'job': 'N/A',
-                        'id': f"okr_{hash(user_name) % 10000}"
-                    })
-                
-                # Thêm missing users vào account_df
-                if missing_records:
-                    missing_df = pd.DataFrame(missing_records)
-                    account_df = pd.concat([account_df, missing_df], ignore_index=True)
-        else:
-            # Nếu không có filtered_members_df, tạo từ final_df
-            user_records = []
-            for user_name in users_with_okr_data:
-                user_data = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].iloc[0]
-                user_records.append({
-                    'name': user_name,
-                    'username': user_data.get('goal_user_username', user_name.lower()),
-                    'email': f"{user_data.get('goal_user_username', user_name.lower())}@company.com",
-                    'job': 'N/A',
-                    'id': f"okr_{hash(user_name) % 10000}"
-                })
-            account_df = pd.DataFrame(user_records)
+        # Xác định users có OKR data
+        users_with_okr_data = set()
+        if analyzer.final_df is not None and not analyzer.final_df.empty:
+            users_with_okr_data = set(analyzer.final_df['goal_user_name'].dropna().unique())
+        
+        # Thông báo về tổng số users
+        total_users = len(account_df)
+        users_with_okr_count = len(users_with_okr_data)
+        users_without_okr_count = total_users - users_with_okr_count
+        
+        st.info(f"📊 Score Analysis will include ALL {total_users} filtered members: {users_with_okr_count} with OKR data + {users_without_okr_count} without OKR data")
         
         krs_df = _extract_krs_data_for_user_manager(analyzer)
         checkin_df = _extract_checkin_data_for_user_manager(analyzer)
@@ -2152,13 +2122,17 @@ def get_default_recipients() -> List[str]:
 
 def show_user_score_analysis(analyzer):
     """Show user score analysis using integrated monthly calculation"""
-    st.subheader("🏆 User Score Analysis (Integrated Monthly Calculation)")
+    st.subheader("🏆 User Score Analysis - All Filtered Members (Has OKR: Yes + No)")
     
     try:
-        # Đảm bảo đồng nhất với OKR shifts analysis
+        # Thông báo về phạm vi phân tích
+        if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+            total_filtered = len(analyzer.filtered_members_df)
+            st.info(f"👥 Analyzing ALL {total_filtered} filtered members (including users with and without OKR data)")
+        
         if analyzer.final_df is not None and not analyzer.final_df.empty:
             total_okr_users = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
-            st.info(f"📊 Analyzing {total_okr_users} users with OKR data (same as OKR shifts analysis)")
+            st.info(f"📊 Within these: {total_okr_users} users have OKR data for detailed scoring")
         
         user_manager = create_user_manager_with_monthly_calculation(analyzer)
         user_manager.update_checkins()
@@ -2169,14 +2143,22 @@ def show_user_score_analysis(analyzer):
         scores_df = _create_user_scores_dataframe(users)
         
         if not scores_df.empty:
-            # Validation - số lượng phải khớp với OKR analysis
+            # Analysis coverage information
             score_count = len(scores_df)
+            users_with_okr = len(scores_df[scores_df['Has OKR'] == 'Yes'])
+            users_without_okr = len(scores_df[scores_df['Has OKR'] == 'No'])
+            
+            st.success(f"✅ Score Analysis complete: {score_count} total users ({users_with_okr} with OKR + {users_without_okr} without OKR)")
+            
             if analyzer.final_df is not None and not analyzer.final_df.empty:
                 okr_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
-                if score_count != okr_count:
-                    st.warning(f"⚠️ Data mismatch detected: Score analysis has {score_count} users, OKR analysis has {okr_count} users")
-                else:
-                    st.success(f"✅ Data consistency confirmed: {score_count} users in both analyses")
+                st.info(f"📊 OKR Analysis covers: {okr_count} users with OKR data")
+            
+            if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+                total_filtered = len(analyzer.filtered_members_df)
+                st.info(f"👥 Total Filtered Members: {total_filtered} users")
+                if score_count == total_filtered:
+                    st.success(f"✅ Perfect coverage: Score Analysis includes all {total_filtered} filtered members")
             
             _display_score_metrics(scores_df)
             _display_score_distribution(scores_df)
@@ -2238,7 +2220,7 @@ def _display_score_distribution(scores_df: pd.DataFrame):
 def _display_score_tables(scores_df: pd.DataFrame):
     """Display score tables"""
     # All performers sorted by score
-    st.subheader("📊 Tất cả nhân viên có goal (sắp xếp theo điểm)")
+    st.subheader("📊 Tất cả nhân viên (sắp xếp theo điểm)")
     all_performers = scores_df.sort_values('Score', ascending=False)
     st.dataframe(all_performers, use_container_width=True, hide_index=True)
     
@@ -2947,15 +2929,16 @@ def _create_excel_report(analyzer) -> BytesIO:
     user_manager.calculate_scores()
     users = user_manager.get_users()
     
-    # Validation - đảm bảo Excel có cùng số lượng users với OKR analysis
+    # Excel coverage information
+    excel_user_count = len(users)
+    users_with_okr_in_excel = len([u for u in users if u.co_OKR == 1])
+    users_without_okr_in_excel = len([u for u in users if u.co_OKR == 0])
+    
+    st.success(f"✅ Excel export ready: {excel_user_count} total users ({users_with_okr_in_excel} with OKR + {users_without_okr_in_excel} without OKR)")
+    
     if analyzer.final_df is not None and not analyzer.final_df.empty:
-        excel_user_count = len(users)
         okr_user_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
-        
-        if excel_user_count != okr_user_count:
-            st.warning(f"⚠️ Excel export mismatch: Excel has {excel_user_count} users, OKR analysis has {okr_user_count} users")
-        else:
-            st.info(f"✅ Excel export consistency: {excel_user_count} users (matching OKR analysis)")
+        st.info(f"📊 Includes all {okr_user_count} users with OKR data + all users without OKR data")
     
     wb = export_to_excel(users)
     excel_buffer = BytesIO()
@@ -3174,7 +3157,7 @@ def setup_enhanced_email_configuration(analyzer):
             format_func=lambda x: {
                 "special": "Special recipients only (tts122403@gmail.com)",
                 "all": "All filtered members",
-                "all_with_goals": "All members with goals (default - with Excel)",
+                "all_with_goals": "All members with goals (Excel contains all filtered members)",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
             index=0  # Mặc định chọn all_with_goals
@@ -3204,7 +3187,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
                 if total_email_count > 0:
                     st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
                     st.info("📎 Excel attachment will be included for all recipients")
-                    st.info(f"📋 Will send to all {total_email_count} members (OKR filtering will be applied if data is loaded)")
+                    st.info(f"📋 Will send to all {total_email_count} members (Excel contains all filtered members: both with OKR and without OKR)")
                 else:
                     st.warning("⚠️ Found 0 valid email addresses in filtered members")
                     
