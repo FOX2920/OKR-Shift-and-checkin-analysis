@@ -240,8 +240,14 @@ class UserManager:
                     last_month_end = DateUtils.get_last_month_end_date()
                     last_month_value = self._calculate_last_month_value_for_user(user_df, last_month_end)
                     
+                    # Áp dụng logic mới: Nếu giá trị cuối tháng trước > giá trị hiện tại 
+                    # thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
+                    adjusted_last_month_value = last_month_value
+                    if last_month_value > current_okr:
+                        adjusted_last_month_value = current_okr - monthly_shift
+                    
                     if monthly_shift > current_okr:
-                        adjusted_shift = current_okr - last_month_value
+                        adjusted_shift = current_okr - adjusted_last_month_value
                         user.dich_chuyen_OKR = round(adjusted_shift, 2)
                     else:
                         user.dich_chuyen_OKR = round(monthly_shift, 2)
@@ -1669,12 +1675,21 @@ class OKRAnalysisSystem:
         current_value = self.okr_calculator.calculate_current_value(user_df)
         reference_value, kr_details = self.okr_calculator.calculate_reference_value(reference_month_end, user_df)
         
+        # Áp dụng logic mới: Nếu giá trị cuối tháng trước > giá trị hiện tại 
+        # thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
+        adjusted_reference_value = reference_value
+        reference_adjustment_applied = False
+        
+        if reference_value > current_value:
+            adjusted_reference_value = current_value - final_okr_goal_shift_monthly
+            reference_adjustment_applied = True
+        
         legacy_okr_shift = current_value - reference_value
         adjusted_okr_shift = final_okr_goal_shift_monthly
         adjustment_applied = False
         
         if final_okr_goal_shift_monthly > current_value:
-            adjusted_okr_shift = current_value - reference_value
+            adjusted_okr_shift = current_value - adjusted_reference_value
             adjustment_applied = True
 
         return {
@@ -1682,9 +1697,11 @@ class OKRAnalysisSystem:
             'okr_shift_monthly': adjusted_okr_shift,
             'original_shift_monthly': final_okr_goal_shift_monthly,
             'current_value': current_value,
-            'last_month_value': reference_value,
+            'last_month_value': adjusted_reference_value,
+            'original_last_month_value': reference_value,
             'legacy_okr_shift_monthly': legacy_okr_shift,
             'adjustment_applied': adjustment_applied,
+            'reference_adjustment_applied': reference_adjustment_applied,
             'kr_details_count': len(kr_details),
             'reference_month_end': reference_month_end.strftime('%d/%m/%Y')
         }
@@ -1841,33 +1858,6 @@ class OKRAnalysisSystem:
                 continue
     
         return sorted(overall_checkins, key=lambda x: x['total_checkins'], reverse=True)
-
-    def _calculate_monthly_shift_data(self, user_df: pd.DataFrame, user_name: str, reference_month_end: datetime) -> Dict:
-        """Calculate monthly shift data for user"""
-        final_okr_goal_shift_monthly = self._calculate_final_okr_goal_shift(user_df, reference_month_end, "monthly")
-        current_value = self.okr_calculator.calculate_current_value(user_df)
-        reference_value, kr_details = self.okr_calculator.calculate_reference_value(reference_month_end, user_df)
-        
-        legacy_okr_shift = current_value - reference_value
-        adjusted_okr_shift = final_okr_goal_shift_monthly
-        adjustment_applied = False
-        
-        if final_okr_goal_shift_monthly > current_value:
-            adjusted_okr_shift = current_value - reference_value
-            adjustment_applied = True
-
-        return {
-            'user_name': user_name,
-            'okr_shift_monthly': adjusted_okr_shift,
-            'original_shift_monthly': final_okr_goal_shift_monthly,
-            'current_value': current_value,
-            'last_month_value': reference_value,
-            'legacy_okr_shift_monthly': legacy_okr_shift,
-            'adjustment_applied': adjustment_applied,
-            'kr_details_count': len(kr_details),
-            'reference_month_end': reference_month_end.strftime('%d/%m/%Y')
-        }
-
 
 # ==================== UTILITY FUNCTIONS ====================
 
