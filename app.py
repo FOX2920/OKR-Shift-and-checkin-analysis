@@ -2155,6 +2155,11 @@ def show_user_score_analysis(analyzer):
     st.subheader("🏆 User Score Analysis (Integrated Monthly Calculation)")
     
     try:
+        # Đảm bảo đồng nhất với OKR shifts analysis
+        if analyzer.final_df is not None and not analyzer.final_df.empty:
+            total_okr_users = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
+            st.info(f"📊 Analyzing {total_okr_users} users with OKR data (same as OKR shifts analysis)")
+        
         user_manager = create_user_manager_with_monthly_calculation(analyzer)
         user_manager.update_checkins()
         user_manager.update_okr_movement()
@@ -2164,6 +2169,20 @@ def show_user_score_analysis(analyzer):
         scores_df = _create_user_scores_dataframe(users)
         
         if not scores_df.empty:
+            # Validation - số lượng phải khớp với OKR analysis
+            score_count = len(scores_df)
+            if analyzer.final_df is not None and not analyzer.final_df.empty:
+                okr_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
+                if score_count != okr_count:
+                    st.warning(f"⚠️ Data mismatch detected: Score analysis has {score_count} users, OKR analysis has {okr_count} users")
+                else:
+                    st.success(f"✅ Data consistency confirmed: {score_count} users in both analyses")
+            
+            # Lưu kết quả User Score Analysis vào session state cho Excel export
+            st.session_state['score_analysis_users'] = users
+            st.session_state['score_analysis_df'] = scores_df
+            st.info(f"💾 User Score Analysis data saved for Excel export: {len(users)} users")
+            
             _display_score_metrics(scores_df)
             _display_score_distribution(scores_df)
             _display_score_tables(scores_df)
@@ -2250,7 +2269,11 @@ def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
     
     with col2:
         if st.button("📋 Export to Excel Format"):
-            wb = export_to_excel(users)
+            # Sử dụng chính xác dữ liệu từ User Score Analysis hiện tại
+            current_users = users  # Đây là users từ User Score Analysis đã được tính toán
+            st.info(f"📊 Preparing Excel export from current User Score Analysis: {len(current_users)} users")
+            
+            wb = export_to_excel(current_users)
             excel_buffer = BytesIO()
             wb.save(excel_buffer)
             excel_buffer.seek(0)
@@ -2261,6 +2284,7 @@ def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
                 file_name=f"okr_report_monthly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            st.success(f"✅ Excel file ready from User Score Analysis: {len(current_users)} users")
 
 def show_data_summary(df: pd.DataFrame, analyzer):
     """Show data summary statistics"""
@@ -2420,7 +2444,8 @@ def show_okr_analysis(okr_shifts: List[Dict], reference_date: datetime, period: 
     
     reference_label = f"thứ 6 {period_label} trước" if period == "weekly" else f"cuối {period_label} trước"
     
-    # Display reference information
+    # Display user count and reference information
+    st.info(f"👥 **Tổng số nhân viên:** {len(okr_shifts)} users có OKR data")
     st.info(f"📅 **Ngày tham chiếu:** {reference_label.title()} ({reference_date.strftime('%d/%m/%Y')})")
     st.info(f"📊 **Logic tính toán:** So sánh giá trị hiện tại với giá trị tại {reference_label}")
     
@@ -2801,7 +2826,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
     # Display recipient count với thông tin Excel
     if recipient_option == "okr_users":
         st.info(f"📧 Sending to {len(recipients)} total users who have OKRs (legacy option)")
-        st.info("📎 Excel attachment will be included for all recipients")
+        st.info("📎 Excel attachment will be included (using User Score Analysis data)")
         # Show first few emails for verification
         if len(recipients) > 0:
             sample_emails = recipients[:3] + (["..."] if len(recipients) > 3 else [])
@@ -2835,7 +2860,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if DateUtils.should_calculate_monthly_shift() else []
         
         # Create Excel for recipients
-        status_text.text("Creating Excel report...")
+        status_text.text("Creating Excel report from User Score Analysis...")
         progress_bar.progress(0.6)
         
         excel_buffer = _create_excel_report(analyzer)
@@ -2921,12 +2946,30 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     return recipients
 
 def _create_excel_report(analyzer) -> BytesIO:
-    """Create Excel report for email attachment"""
+    """Create Excel report for email attachment - using User Score Analysis data"""
+    
+    # Sử dụng dữ liệu từ User Score Analysis nếu có
+    if 'score_analysis_users' in st.session_state and st.session_state['score_analysis_users']:
+        users = st.session_state['score_analysis_users']
+        st.info(f"✅ Using User Score Analysis data for Excel: {len(users)} users")
+    else:
+        st.warning("⚠️ No User Score Analysis data found, creating new calculation...")
+        # Fallback nếu chưa có User Score Analysis
     user_manager = create_user_manager_with_monthly_calculation(analyzer)
     user_manager.update_checkins()
     user_manager.update_okr_movement()
     user_manager.calculate_scores()
     users = user_manager.get_users()
+    
+    # Validation - đảm bảo Excel có cùng số lượng users với OKR analysis
+    if analyzer.final_df is not None and not analyzer.final_df.empty:
+        excel_user_count = len(users)
+        okr_user_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
+        
+        if excel_user_count != okr_user_count:
+            st.warning(f"⚠️ Excel export mismatch: Excel has {excel_user_count} users, OKR analysis has {okr_user_count} users")
+        else:
+            st.success(f"✅ Excel export from User Score Analysis: {excel_user_count} users (matching OKR analysis)")
     
     wb = export_to_excel(users)
     excel_buffer = BytesIO()
@@ -3174,7 +3217,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
                 
                 if total_email_count > 0:
                     st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
-                    st.info("📎 Excel attachment will be included for all recipients")
+                    st.info("📎 Excel attachment will be included (using User Score Analysis data)")
                     st.info(f"📋 Will send to all {total_email_count} members (OKR filtering will be applied if data is loaded)")
                 else:
                     st.warning("⚠️ Found 0 valid email addresses in filtered members")
@@ -3244,7 +3287,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         st.session_state[auto_run_key] = True
         with st.spinner("🚀 Auto-running analysis..."):
             run_analysis(analyzer, selected_cycle, show_missing_analysis)
-    
+
     # Main action buttons
     col1, col2 = st.columns(2)
     
