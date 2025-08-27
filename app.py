@@ -2787,7 +2787,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
         # Đính kèm Excel cho OKR users hoặc special recipients
-        attach_excel = recipient_option in ["okr_users", "select_okr_users", "special"]
+        attach_excel = recipient_option in ["okr_users", "select_okr_users", "special", "all_with_goals"]
         
         success, message, errors = email_generator.send_email_report_bulk(
             email_from, email_password, recipients, subject, html_content,
@@ -2826,9 +2826,16 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
             return []
     elif recipient_option == "special":
         recipients = get_default_recipients()
+    elif recipient_option == "all_with_goals":  # Option mới
+        recipients = get_emails_of_okr_users(analyzer)
+        if not recipients:
+            st.warning("No OKR user emails found, falling back to all filtered members")
+            recipients = get_email_list(analyzer)
+            if not recipients:
+                st.error("No email addresses found in member data")
+                return []
     elif recipient_option == "okr_users":
         recipients = get_emails_of_okr_users(analyzer)
-        # If no OKR-specific emails found, fall back to all filtered members
         if not recipients:
             st.warning("No specific OKR user emails found, sending to all filtered members")
             recipients = get_email_list(analyzer)
@@ -2887,28 +2894,58 @@ def get_emails_of_okr_users(analyzer) -> List[str]:
     """Get email list of users who have OKRs"""
     try:
         if analyzer.filtered_members_df is None:
+            st.warning("⚠️ Filtered members data not loaded yet")
             return []
         
-        # First, get all emails from filtered members
-        all_member_emails = []
-        for _, member in analyzer.filtered_members_df.iterrows():
-            if pd.notna(member.get('email')) and member['email'].strip():
-                all_member_emails.append(member['email'].strip())
+        # Debug: Show total filtered members
+        total_members = len(analyzer.filtered_members_df)
+        st.write(f"🔍 Debug: Total filtered members: {total_members}")
         
-        # If we don't have final_df yet, return all member emails
+        # Check email column
+        if 'email' not in analyzer.filtered_members_df.columns:
+            st.error("❌ Email column not found in filtered members data")
+            return []
+        
+        # Get all emails from filtered members (for debugging)
+        all_member_emails = []
+        valid_email_count = 0
+        for _, member in analyzer.filtered_members_df.iterrows():
+            email = member.get('email', '')
+            if pd.notna(email) and str(email).strip() and '@' in str(email):
+                all_member_emails.append(str(email).strip())
+                valid_email_count += 1
+        
+        st.write(f"🔍 Debug: Valid emails found in filtered members: {valid_email_count}")
+        if valid_email_count > 0:
+            st.write(f"🔍 Debug: Sample emails: {all_member_emails[:3]}")
+        
+        # If we don't have final_df yet, return all valid member emails
         if analyzer.final_df is None or analyzer.final_df.empty:
+            st.info(f"📧 Using all {len(all_member_emails)} valid member emails (OKR data not loaded yet)")
             return all_member_emails
         
         # Get users who have goals/OKRs
         users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
+        st.write(f"🔍 Debug: Users with goals: {len(users_with_goals)}")
         
         # Match by name and get emails
         okr_users_emails = []
+        matched_users = []
         for _, member in analyzer.filtered_members_df.iterrows():
-            if (member['name'] in users_with_goals and 
-                pd.notna(member.get('email')) and 
-                member['email'].strip()):
-                okr_users_emails.append(member['email'].strip())
+            member_name = member.get('name', '')
+            member_email = member.get('email', '')
+            
+            if (member_name in users_with_goals and 
+                pd.notna(member_email) and 
+                str(member_email).strip() and 
+                '@' in str(member_email)):
+                
+                okr_users_emails.append(str(member_email).strip())
+                matched_users.append(member_name)
+        
+        st.write(f"🔍 Debug: Matched OKR users with emails: {len(okr_users_emails)}")
+        if matched_users:
+            st.write(f"🔍 Debug: Sample matched users: {matched_users[:3]}")
         
         return okr_users_emails
         
@@ -2977,16 +3014,17 @@ def setup_enhanced_email_configuration(analyzer):
     with st.sidebar:
         st.subheader("📧 Enhanced Email Settings")
         
-        # Recipient options - mặc định chọn okr_users
+        # Recipient options - mặc định chọn all_with_goals
         recipient_option = st.radio(
             "Send emails to:",
-            ["okr_users", "special", "all"],
+            ["all_with_goals", "special", "all", "okr_users"],
             format_func=lambda x: {
                 "special": "Special recipients only (hoangta & xnk3)",
-                "all": "All filtered members", 
-                "okr_users": "People with OKRs (with Excel attachment)"
+                "all": "All filtered members",
+                "all_with_goals": "All members with goals (with Excel)",  # Mặc định này
+                "okr_users": "People with OKRs (legacy option)"
             }[x],
-            index=0
+            index=0  # Mặc định chọn option đầu tiên
         )
         
         # Display recipient info với analyzer
@@ -3004,10 +3042,32 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
             st.info("📊 Will send to all filtered members")
     elif recipient_option == "special":
         st.info("📊 Will send to 2 special recipients with Excel attachment")
+    elif recipient_option == "all_with_goals":  # Option mới
+        if analyzer:
+            try:
+                # Lấy danh sách email của users có goals
+                emails_with_goals = get_emails_of_okr_users(analyzer)
+                if emails_with_goals:
+                    st.success(f"📧 Found {len(emails_with_goals)} email addresses for All members with goals")
+                    st.info("📎 Excel attachment will be included for all recipients")
+                    # Hiển thị sample emails
+                    if len(emails_with_goals) <= 5:
+                        st.info(f"📋 Recipients: {', '.join(emails_with_goals)}")
+                    else:
+                        sample_emails = emails_with_goals[:3] + ["..."]
+                        st.info(f"📋 Sample recipients: {', '.join(sample_emails)} (+{len(emails_with_goals)-3} more)")
+                else:
+                    st.warning("⚠️ Found 0 email addresses for All members with goals")
+                    st.info("📧 Will fallback to all filtered members when sending")
+                    
+            except Exception as e:
+                st.error(f"Error counting emails: {e}")
+                st.info("📧 Email count will be calculated when running")
+        else:
+            st.info("📧 Email count will be calculated when running")
     elif recipient_option == "okr_users":
         if analyzer:
             try:
-                # Get all member emails first to show total
                 all_emails = get_email_list(analyzer)
                 okr_emails = get_emails_of_okr_users(analyzer)
                 
