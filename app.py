@@ -1463,6 +1463,10 @@ class OKRAnalysisSystem:
     def get_cycle_list(self) -> List[Dict]:
         """Get list of quarterly cycles"""
         return self.api_client.get_cycle_list()
+    
+    def get_total_account_users(self) -> pd.DataFrame:
+        """Get all account users (not filtered)"""
+        return self.api_client.get_account_users()
 
     def load_and_process_data(self, progress_callback=None):
         """Main function to load and process all data"""
@@ -2749,7 +2753,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
     
     # Display recipient count với thông tin Excel
     if recipient_option == "okr_users":
-        st.info(f"📧 Sending to {len(recipients)} people who have OKRs")
+        st.info(f"📧 Sending to {len(recipients)} total users who have OKRs (legacy option)")
         st.info("📎 Excel attachment will be included for all recipients")
         # Show first few emails for verification
         if len(recipients) > 0:
@@ -2853,13 +2857,11 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
                 st.error("No email addresses found in member data")
                 return []
     elif recipient_option == "okr_users":
-        recipients = get_emails_of_okr_users(analyzer)
+        recipients = get_emails_of_total_users_with_okr(analyzer)
         if not recipients:
-            st.warning("No specific OKR user emails found, sending to all filtered members")
-            recipients = get_email_list(analyzer)
-            if not recipients:
-                st.error("No email addresses found in member data")
-                return []
+            st.warning("No OKR user emails found in total users")
+            st.error("No email addresses found in total user data")
+            return []
     elif recipient_option == "select_okr_users":
         if not selected_okr_emails:
             st.error("No OKR users selected")
@@ -3008,6 +3010,74 @@ def get_all_member_emails_count(analyzer) -> int:
     except Exception:
         return 0
 
+def get_total_user_emails_count(analyzer) -> int:
+    """Get count of all valid email addresses in total account users (not filtered)"""
+    try:
+        total_users_df = analyzer.get_total_account_users()
+        if total_users_df is None or total_users_df.empty:
+            return 0
+        
+        if 'email' not in total_users_df.columns:
+            return 0
+        
+        valid_emails = 0
+        for _, user in total_users_df.iterrows():
+            user_email = user.get('email', '')
+            if pd.notna(user_email) and str(user_email).strip() and '@' in str(user_email):
+                valid_emails += 1
+        
+        return valid_emails
+    except Exception as e:
+        return 0
+
+def get_emails_of_total_users_with_okr(analyzer) -> List[str]:
+    """Get email list of total users (not filtered) who have OKRs"""
+    try:
+        # Get total account users
+        total_users_df = analyzer.get_total_account_users()
+        if total_users_df is None or total_users_df.empty:
+            return []
+        
+        if 'email' not in total_users_df.columns:
+            return []
+        
+        # Get all valid emails from total users
+        all_total_emails = []
+        for _, user in total_users_df.iterrows():
+            user_email = user.get('email', '')
+            if pd.notna(user_email) and str(user_email).strip() and '@' in str(user_email):
+                all_total_emails.append(str(user_email).strip())
+        
+        # If no OKR data loaded yet, return all total emails
+        if analyzer.final_df is None or analyzer.final_df.empty:
+            return all_total_emails
+        
+        # Get unique users who have goals
+        users_with_goals = set()
+        for _, row in analyzer.final_df.iterrows():
+            goal_user_name = row.get('goal_user_name', '')
+            if goal_user_name:
+                users_with_goals.add(goal_user_name)
+        
+        # Match by name and get emails from total users
+        okr_users_emails = []
+        for _, user in total_users_df.iterrows():
+            user_name = user.get('name', '')
+            user_email = user.get('email', '')
+            
+            if (user_name in users_with_goals and 
+                pd.notna(user_email) and 
+                str(user_email).strip() and
+                '@' in str(user_email)):
+                
+                okr_users_emails.append(str(user_email).strip())
+        
+        # Return OKR user emails if found, otherwise all total emails
+        return okr_users_emails if okr_users_emails else all_total_emails
+        
+    except Exception as e:
+        return []
+
 def setup_analysis_options():
     """Setup analysis options in sidebar"""
     with st.sidebar:
@@ -3091,10 +3161,10 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
     elif recipient_option == "okr_users":
         if analyzer:
             try:
-                total_email_count = get_all_member_emails_count(analyzer)
+                total_email_count = get_total_user_emails_count(analyzer)
                 st.info(f"📊 Will send to people who have OKRs with Excel attachment")
-                st.success(f"📧 Available emails in filtered members: {total_email_count}")
-                st.info("📧 Will send to OKR users (or all if OKR data not loaded)")
+                st.success(f"📧 Available emails in total users: {total_email_count}")
+                st.info("📧 Will send to total users (not filtered) who have OKRs")
                     
             except Exception as e:
                 st.error(f"Error counting emails: {e}")
