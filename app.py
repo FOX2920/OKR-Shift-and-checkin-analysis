@@ -1382,7 +1382,6 @@ class EmailReportGenerator:
         success_count = 0
         failed_count = 0
         errors = []
-        special_recipients = ["hoangta@apluscorp.vn", "xnk3@apluscorp.vn"]
         
         try:
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
@@ -1393,8 +1392,8 @@ class EmailReportGenerator:
                     try:
                         message = self._create_email_message(email_from, email_to, subject, html_content)
                         
-                        # Attach Excel for special recipients
-                        if email_to in special_recipients and attach_excel and excel_buffer:
+                        # Đính kèm Excel cho TẤT CẢ recipients nếu attach_excel = True
+                        if attach_excel and excel_buffer:
                             self._attach_excel_to_message(message, excel_buffer, excel_filename)
                         
                         server.send_message(message)
@@ -2730,11 +2729,16 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
     if not recipients:
         return
     
-    # Display recipient count
+    # Display recipient count với thông tin Excel
     if recipient_option == "okr_users":
         st.info(f"📧 Sending to {len(recipients)} people who have OKRs")
+        st.info("📎 Excel attachment will be included for all recipients")
     elif recipient_option == "select_okr_users":
-        st.info(f"📧 Sending to {len(recipients)} selected OKR users")
+        st.info(f"📧 Sending to {len(recipients)} selected OKR users with Excel")
+    elif recipient_option == "all":
+        st.info(f"📧 Sending to {len(recipients)} all filtered members")
+    else:  # special
+        st.info(f"📧 Sending to {len(recipients)} special recipients")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -2757,7 +2761,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if DateUtils.should_calculate_monthly_shift() else []
         
-        # Create Excel for special recipients
+        # Create Excel for recipients
         status_text.text("Creating Excel report...")
         progress_bar.progress(0.6)
         
@@ -2778,9 +2782,12 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
+        # Đính kèm Excel cho OKR users hoặc special recipients
+        attach_excel = recipient_option in ["okr_users", "select_okr_users", "special"]
+        
         success, message, errors = email_generator.send_email_report_bulk(
             email_from, email_password, recipients, subject, html_content,
-            attach_excel=True, excel_buffer=excel_buffer,
+            attach_excel=attach_excel, excel_buffer=excel_buffer,
             excel_filename=f"okr_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         )
         
@@ -2789,7 +2796,8 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         if success:
             st.success(f"✅ {message}")
             st.info(f"📧 Sent to {len(recipients)} recipients")
-            st.info("📎 Excel attached for: hoangta@apluscorp.vn, xnk3@apluscorp.vn")
+            if attach_excel:
+                st.info("📎 Excel report attached to all emails")
             
             if errors:
                 st.warning("⚠️ Some emails failed:")
@@ -2949,37 +2957,45 @@ def setup_enhanced_email_configuration():
     with st.sidebar:
         st.subheader("📧 Enhanced Email Settings")
         
-        # Recipient options
+        # Recipient options - mặc định chọn okr_users
         recipient_option = st.radio(
             "Send emails to:",
-            ["special", "all", "okr_users"],
+            ["okr_users", "special", "all"],  # Đổi thứ tự để okr_users là mặc định
             format_func=lambda x: {
                 "special": "Special recipients only (hoangta & xnk3)",
-                "all": "All filtered members",
-                "okr_users": "People with OKRs only"
-            }[x]
+                "all": "All filtered members", 
+                "okr_users": "People with OKRs only (with Excel attachment)"  # Thêm thông báo Excel
+            }[x],
+            index=0  # Mặc định chọn okr_users
         )
         
-        # Display recipient info
-        _display_recipient_info(recipient_option)
+        # Display recipient info với số lượng email
+        _display_recipient_info_with_count(recipient_option)
         
         return recipient_option, None
 
-def _display_recipient_info(recipient_option: str, selected_okr_emails: Optional[List[str]] = None):
-    """Display recipient information"""
+def _display_recipient_info_with_count(recipient_option: str, selected_okr_emails: Optional[List[str]] = None):
+    """Display recipient information with email count"""
     if recipient_option == "all":
         st.info("📊 Will send to all filtered members")
     elif recipient_option == "special":
         st.info("📊 Will send to 2 special recipients with Excel attachment")
     elif recipient_option == "okr_users":
-        st.info("📊 Will send to all people who have OKRs")
+        st.info("📊 Will send to all people who have OKRs with Excel attachment")
+        # Hiển thị số lượng email nếu có thể truy cập analyzer
+        if 'analyzer' in st.session_state:
+            try:
+                okr_emails = get_emails_of_okr_users(st.session_state.analyzer)
+                st.success(f"📧 Found {len(okr_emails)} email addresses for OKR users")
+            except:
+                st.info("📧 Email count will be calculated when running")
     elif recipient_option == "select_okr_users":
         if selected_okr_emails:
             st.info(f"📊 Will send to {len(selected_okr_emails)} selected OKR users")
         else:
             st.warning("No OKR users selected")
-    
-    st.info("📎 Excel attachment will be included for:\n- hoangta@apluscorp.vn\n- xnk3@apluscorp.vn")
+
+
 
 def main():
     """Main application entry point"""
@@ -3002,6 +3018,8 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     try:
         analyzer = OKRAnalysisSystem(goal_token, account_token)
         email_generator = EmailReportGenerator()
+        # Lưu analyzer vào session state để sử dụng trong sidebar
+        st.session_state.analyzer = analyzer
     except Exception as e:
         st.error(f"Failed to initialize analyzer: {e}")
         return
@@ -3022,7 +3040,12 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
     
     with col2:
-        email_button = st.button("📧 Send Enhanced Email Report", type="secondary", use_container_width=True)
+        # Thay đổi tên nút để phản ánh việc gửi Excel
+        if recipient_option == "okr_users":
+            button_text = "📧 Send Email Report + Excel to OKR Users"
+        else:
+            button_text = "📧 Send Enhanced Email Report"
+        email_button = st.button(button_text, type="secondary", use_container_width=True)
     
     # Handle button clicks
     if analyze_button:
