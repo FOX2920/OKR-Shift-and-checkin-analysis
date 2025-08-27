@@ -2252,6 +2252,17 @@ def _display_score_tables(scores_df: pd.DataFrame):
     if not low_performers_df.empty:
         st.subheader("⚠️ Users Needing Support")
         st.dataframe(low_performers_df, use_container_width=True, hide_index=True)
+    else:
+        # Tạo empty DataFrame với cùng structure nếu không có low performers
+        low_performers_df = pd.DataFrame(columns=scores_df.columns)
+    
+    # Lưu các bảng quan trọng vào session state cho Excel export
+    st.session_state['all_performers_table'] = all_performers
+    st.session_state['users_needing_support_table'] = low_performers_df
+    
+    # Thông báo về dữ liệu đã lưu
+    support_count = len(low_performers_df) if not low_performers_df.empty else 0
+    st.info(f"💾 Saved tables for Excel: {len(all_performers)} total performers, {support_count} needing support")
 
 def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
     """Display export options for scores"""
@@ -2269,11 +2280,22 @@ def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
     
     with col2:
         if st.button("📋 Export to Excel Format"):
-            # Sử dụng chính xác dữ liệu từ User Score Analysis hiện tại
-            current_users = users  # Đây là users từ User Score Analysis đã được tính toán
-            st.info(f"📊 Preparing Excel export from current User Score Analysis: {len(current_users)} users")
+            # Ưu tiên sử dụng data từ tables "Tất cả nhân viên có goal" và "Users Needing Support"
+            if 'all_performers_table' in st.session_state and 'users_needing_support_table' in st.session_state:
+                all_performers = st.session_state['all_performers_table']
+                users_needing_support = st.session_state['users_needing_support_table']
+                
+                # Convert tables to users
+                excel_users = _convert_tables_to_users(all_performers, users_needing_support)
+                
+                support_count = len(users_needing_support) if not users_needing_support.empty else 0
+                st.info(f"📊 Preparing Excel from score tables: {len(all_performers)} total, {support_count} needing support")
+            else:
+                # Fallback to current users
+                excel_users = users
+                st.info(f"📊 Preparing Excel from current User Score Analysis: {len(excel_users)} users")
             
-            wb = export_to_excel(current_users)
+            wb = export_to_excel(excel_users)
             excel_buffer = BytesIO()
             wb.save(excel_buffer)
             excel_buffer.seek(0)
@@ -2284,7 +2306,7 @@ def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
                 file_name=f"okr_report_monthly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.success(f"✅ Excel file ready from User Score Analysis: {len(current_users)} users")
+            st.success(f"✅ Excel file ready from specific score analysis tables: {len(excel_users)} users")
 
 def show_data_summary(df: pd.DataFrame, analyzer):
     """Show data summary statistics"""
@@ -2826,7 +2848,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
     # Display recipient count với thông tin Excel
     if recipient_option == "okr_users":
         st.info(f"📧 Sending to {len(recipients)} total users who have OKRs (legacy option)")
-        st.info("📎 Excel attachment will be included (using User Score Analysis data)")
+        st.info("📎 Excel attachment will be included (from score analysis tables: 'Tất cả nhân viên có goal' & 'Users Needing Support')")
         # Show first few emails for verification
         if len(recipients) > 0:
             sample_emails = recipients[:3] + (["..."] if len(recipients) > 3 else [])
@@ -2860,7 +2882,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if DateUtils.should_calculate_monthly_shift() else []
         
         # Create Excel for recipients
-        status_text.text("Creating Excel report from User Score Analysis...")
+        status_text.text("Creating Excel report from score analysis tables ('Tất cả nhân viên có goal' & 'Users Needing Support')...")
         progress_bar.progress(0.6)
         
         excel_buffer = _create_excel_report(analyzer)
@@ -2945,21 +2967,52 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     
     return recipients
 
-def _create_excel_report(analyzer) -> BytesIO:
-    """Create Excel report for email attachment - using User Score Analysis data"""
+def _convert_tables_to_users(all_performers_df: pd.DataFrame, users_needing_support_df: pd.DataFrame) -> List[User]:
+    """Convert score analysis tables to User objects for Excel export"""
+    users = []
     
-    # Sử dụng dữ liệu từ User Score Analysis nếu có
-    if 'score_analysis_users' in st.session_state and st.session_state['score_analysis_users']:
+    # Sử dụng all_performers_df làm nguồn chính vì nó chứa tất cả users
+    for index, row in all_performers_df.iterrows():
+        # Tạo User object từ DataFrame row
+        user = User(
+            user_id=str(index),  # Sử dụng index làm user_id
+            name=row['Name'],
+            co_OKR=1 if row['Has OKR'] == 'Yes' else 0,
+            checkin=int(row['Checkin Count']),
+            dich_chuyen_OKR=float(row['OKR Shift (Monthly)']),
+            score=float(row['Score'])
+        )
+        users.append(user)
+    
+    st.info(f"🔄 Converted {len(users)} users from score analysis tables for Excel export")
+    return users
+
+def _create_excel_report(analyzer) -> BytesIO:
+    """Create Excel report for email attachment - using specific tables from User Score Analysis"""
+    
+    # Sử dụng dữ liệu từ các bảng cụ thể: "Tất cả nhân viên có goal" và "Users Needing Support"
+    if 'all_performers_table' in st.session_state and 'users_needing_support_table' in st.session_state:
+        all_performers = st.session_state['all_performers_table']
+        users_needing_support = st.session_state['users_needing_support_table']
+        
+        # Convert DataFrames to Users for Excel export
+        users_from_tables = _convert_tables_to_users(all_performers, users_needing_support)
+        
+        support_count = len(users_needing_support) if not users_needing_support.empty else 0
+        st.success(f"✅ Using score analysis tables for Excel: {len(all_performers)} total performers, {support_count} needing support")
+        
+        users = users_from_tables
+    elif 'score_analysis_users' in st.session_state and st.session_state['score_analysis_users']:
         users = st.session_state['score_analysis_users']
         st.info(f"✅ Using User Score Analysis data for Excel: {len(users)} users")
     else:
-        st.warning("⚠️ No User Score Analysis data found, creating new calculation...")
+        st.warning("⚠️ No User Score Analysis tables found, creating new calculation...")
         # Fallback nếu chưa có User Score Analysis
-    user_manager = create_user_manager_with_monthly_calculation(analyzer)
-    user_manager.update_checkins()
-    user_manager.update_okr_movement()
-    user_manager.calculate_scores()
-    users = user_manager.get_users()
+        user_manager = create_user_manager_with_monthly_calculation(analyzer)
+        user_manager.update_checkins()
+        user_manager.update_okr_movement()
+        user_manager.calculate_scores()
+        users = user_manager.get_users()
     
     # Validation - đảm bảo Excel có cùng số lượng users với OKR analysis
     if analyzer.final_df is not None and not analyzer.final_df.empty:
@@ -2969,7 +3022,7 @@ def _create_excel_report(analyzer) -> BytesIO:
         if excel_user_count != okr_user_count:
             st.warning(f"⚠️ Excel export mismatch: Excel has {excel_user_count} users, OKR analysis has {okr_user_count} users")
         else:
-            st.success(f"✅ Excel export from User Score Analysis: {excel_user_count} users (matching OKR analysis)")
+            st.success(f"✅ Excel export from specific tables: {excel_user_count} users (matching OKR analysis)")
     
     wb = export_to_excel(users)
     excel_buffer = BytesIO()
@@ -3217,8 +3270,8 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
                 
                 if total_email_count > 0:
                     st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
-                    st.info("📎 Excel attachment will be included (using User Score Analysis data)")
-                    st.info(f"📋 Will send to all {total_email_count} members (OKR filtering will be applied if data is loaded)")
+                    st.info("📎 Excel attachment will be included (from score analysis tables)")
+                    st.info(f"📋 Will send to all {total_email_count} members (Excel contains data from 'Tất cả nhân viên có goal' & 'Users Needing Support' tables)")
                 else:
                     st.warning("⚠️ Found 0 valid email addresses in filtered members")
                     
