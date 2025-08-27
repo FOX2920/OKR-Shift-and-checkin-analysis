@@ -2957,6 +2957,15 @@ def setup_cycle_selection(analyzer) -> Dict:
         selected_cycle = cycle_options[selected_cycle_name]
         analyzer.checkin_path = selected_cycle['path']
         
+        # Auto-load filtered members để tránh lỗi trong sidebar
+        if analyzer.filtered_members_df is None:
+            with st.spinner("🔄 Loading filtered members..."):
+                try:
+                    analyzer.get_filtered_members()
+                    st.success(f"✅ Loaded {len(analyzer.filtered_members_df)} filtered members")
+                except Exception as e:
+                    st.error(f"❌ Failed to load filtered members: {e}")
+        
         st.info(f"🎯 **Selected Cycle:**\n\n**{selected_cycle['name']}**\n\nPath: `{selected_cycle['path']}`\n\nStart: {selected_cycle['formatted_start_time']}")
         
         return selected_cycle
@@ -3116,11 +3125,18 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
     email_config = setup_email_configuration()
     recipient_option, custom_emails = setup_enhanced_email_configuration(analyzer)
 
+    # Auto-run analysis để đảm bảo data được load
+    auto_run_key = f"auto_analysis_{selected_cycle['path']}"
+    if auto_run_key not in st.session_state:
+        st.session_state[auto_run_key] = True
+        with st.spinner("🚀 Auto-running analysis..."):
+            run_analysis(analyzer, selected_cycle, show_missing_analysis)
+    
     # Main action buttons
     col1, col2 = st.columns(2)
     
     with col1:
-        analyze_button = st.button("🚀 Start Analysis", type="primary", use_container_width=True)
+        analyze_button = st.button("🔄 Re-run Analysis", type="primary", use_container_width=True)
     
     with col2:
         # Thay đổi tên nút để phản ánh việc gửi Excel
