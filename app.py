@@ -1896,47 +1896,50 @@ class OKRAnalysisSystem:
 def create_user_manager_with_monthly_calculation(analyzer):
     """Create UserManager integrated with monthly OKR calculation from OKRAnalysisSystem"""
     
-    # Tạo account_df từ tất cả users có goal trong final_df để đảm bảo đầy đủ
+    # Chỉ tạo account_df cho users thực sự có OKR data để đồng nhất với OKR shifts analysis
     if analyzer.final_df is not None and not analyzer.final_df.empty:
-        # Lấy tất cả unique users có goal từ final_df
-        users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
+        # Lấy tất cả unique users có OKR data từ final_df
+        users_with_okr_data = set(analyzer.final_df['goal_user_name'].dropna().unique())
         
-        # Tạo account_df từ filtered_members_df làm base
+        # Tạo account_df chỉ từ users có OKR data
         if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
-            account_df = analyzer.filtered_members_df.copy()
+            # Lọc filtered_members_df để chỉ lấy users có OKR data
+            account_df = analyzer.filtered_members_df[
+                analyzer.filtered_members_df['name'].isin(users_with_okr_data)
+            ].copy()
             
-            # Thêm users có goal mà không có trong filtered_members_df
-            existing_names = set(account_df['name'].dropna().unique()) if 'name' in account_df.columns else set()
-            missing_users = users_with_goals - existing_names
+            # Nếu có users có OKR data nhưng không có trong filtered_members_df, tạo record cơ bản
+            existing_names = set(account_df['name'].dropna().unique()) if not account_df.empty and 'name' in account_df.columns else set()
+            missing_users = users_with_okr_data - existing_names
             
             if missing_users:
-                # Tạo records cơ bản cho missing users
                 missing_records = []
                 for user_name in missing_users:
-                    # Lấy thông tin cơ bản từ final_df
+                    # Lấy thông tin từ final_df
                     user_data = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].iloc[0]
                     missing_records.append({
                         'name': user_name,
                         'username': user_data.get('goal_user_username', user_name.lower()),
                         'email': f"{user_data.get('goal_user_username', user_name.lower())}@company.com",
                         'job': 'N/A',
-                        'id': f"missing_{hash(user_name) % 10000}"
+                        'id': f"okr_{hash(user_name) % 10000}"
                     })
                 
                 # Thêm missing users vào account_df
-                missing_df = pd.DataFrame(missing_records)
-                account_df = pd.concat([account_df, missing_df], ignore_index=True)
+                if missing_records:
+                    missing_df = pd.DataFrame(missing_records)
+                    account_df = pd.concat([account_df, missing_df], ignore_index=True)
         else:
             # Nếu không có filtered_members_df, tạo từ final_df
             user_records = []
-            for user_name in users_with_goals:
+            for user_name in users_with_okr_data:
                 user_data = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].iloc[0]
                 user_records.append({
                     'name': user_name,
                     'username': user_data.get('goal_user_username', user_name.lower()),
                     'email': f"{user_data.get('goal_user_username', user_name.lower())}@company.com",
-                    'job': 'N/A', 
-                    'id': f"goal_{hash(user_name) % 10000}"
+                    'job': 'N/A',
+                    'id': f"okr_{hash(user_name) % 10000}"
                 })
             account_df = pd.DataFrame(user_records)
         
