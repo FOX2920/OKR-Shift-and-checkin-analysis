@@ -2955,7 +2955,7 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
         if not recipients:
             st.warning("No OKR user emails found in total users")
             st.error("No email addresses found in total user data")
-            return []
+                return []
     elif recipient_option == "select_okr_users":
         if not selected_okr_emails:
             st.error("No OKR users selected")
@@ -2973,13 +2973,13 @@ def _convert_tables_to_users(all_performers_df: pd.DataFrame, users_needing_supp
     
     # Sử dụng all_performers_df làm nguồn chính vì nó chứa tất cả users
     for index, row in all_performers_df.iterrows():
-        # Tạo User object từ DataFrame row
+        # Tạo User object từ DataFrame row với tên cột chính xác
         user = User(
             user_id=str(index),  # Sử dụng index làm user_id
             name=row['Name'],
             co_OKR=1 if row['Has OKR'] == 'Yes' else 0,
-            checkin=int(row['Checkin Count']),
-            dich_chuyen_OKR=float(row['OKR Shift (Monthly)']),
+            checkin=1 if row['Check-in'] == 'Yes' else 0,  # Sửa từ 'Checkin Count' thành 'Check-in'
+            dich_chuyen_OKR=float(row['OKR Movement']),  # Sửa từ 'OKR Shift (Monthly)' thành 'OKR Movement'
             score=float(row['Score'])
         )
         users.append(user)
@@ -3008,11 +3008,11 @@ def _create_excel_report(analyzer) -> BytesIO:
     else:
         st.warning("⚠️ No User Score Analysis tables found, creating new calculation...")
         # Fallback nếu chưa có User Score Analysis
-        user_manager = create_user_manager_with_monthly_calculation(analyzer)
-        user_manager.update_checkins()
-        user_manager.update_okr_movement()
-        user_manager.calculate_scores()
-        users = user_manager.get_users()
+    user_manager = create_user_manager_with_monthly_calculation(analyzer)
+    user_manager.update_checkins()
+    user_manager.update_okr_movement()
+    user_manager.calculate_scores()
+    users = user_manager.get_users()
     
     # Validation - đảm bảo Excel có cùng số lượng users với OKR analysis
     if analyzer.final_df is not None and not analyzer.final_df.empty:
@@ -3272,7 +3272,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
                     st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
                     st.info("📎 Excel attachment will be included (from score analysis tables)")
                     st.info(f"📋 Will send to all {total_email_count} members (Excel contains data from 'Tất cả nhân viên có goal' & 'Users Needing Support' tables)")
-                else:
+                    else:
                     st.warning("⚠️ Found 0 valid email addresses in filtered members")
                     
             except Exception as e:
