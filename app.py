@@ -845,7 +845,7 @@ class EmailReportGenerator:
             <div style='max-height: 500px; overflow-y: auto; padding: 10px;'>
         """
         
-        for name, value in list(data.items())[:15]:
+        for name, value in list(data.items()):
             width_pct = (abs(value) / max_value * 100) if max_value > 0 else 0
             color, bg_color, icon = self._get_bar_style(value)
             
@@ -1144,16 +1144,16 @@ class EmailReportGenerator:
         
         # Weekly OKR shifts chart
         if okr_shifts:
-            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts[:15]}
+            okr_shifts_data = {u['user_name']: u['okr_shift'] for u in okr_shifts}
             charts['okr_weekly'] = self.create_visual_html_chart(
-                okr_shifts_data, 'bar', 'Dịch chuyển OKR tuần (Top 15)'
+                okr_shifts_data, 'bar', 'Dịch chuyển OKR tuần (Tất cả NV có goal)'
             )
         
         # Monthly OKR shifts chart
         if okr_shifts_monthly:
-            okr_shifts_monthly_data = {u['user_name']: u['okr_shift_monthly'] for u in okr_shifts_monthly[:15]}
+            okr_shifts_monthly_data = {u['user_name']: u['okr_shift_monthly'] for u in okr_shifts_monthly}
             charts['okr_monthly'] = self.create_visual_html_chart(
-                okr_shifts_monthly_data, 'bar', 'Dịch chuyển OKR tháng (Top 15)'
+                okr_shifts_monthly_data, 'bar', 'Dịch chuyển OKR tháng (Tất cả NV có goal)'
             )
         
         return charts
@@ -1172,11 +1172,11 @@ class EmailReportGenerator:
             'goals_no_checkins': self._generate_table_html(members_with_goals_no_checkins,
                                                          ["Tên", "Username", "Chức vụ"],
                                                          ["name", "username", "job"]),
-            'top_performers': self._generate_okr_table_html([u for u in okr_shifts if u['okr_shift'] > 0][:10] if okr_shifts else []),
-            'top_performers_monthly': self._generate_okr_table_html([u for u in okr_shifts_monthly if u['okr_shift_monthly'] > 0][:10] if okr_shifts_monthly else [], "monthly"),
-            'issue_performers': self._generate_okr_table_html([u for u in okr_shifts if u['okr_shift'] < 0][:10] if okr_shifts else []),
-            'issue_performers_monthly': self._generate_okr_table_html([u for u in okr_shifts_monthly if u['okr_shift_monthly'] < 0][:10] if okr_shifts_monthly else [], "monthly"),
-            'top_overall': self._generate_checkin_overview_table_html(overall_checkins[:20] if overall_checkins else [])
+            'top_performers': self._generate_okr_table_html([u for u in okr_shifts if u['okr_shift'] > 0] if okr_shifts else []),
+            'top_performers_monthly': self._generate_okr_table_html([u for u in okr_shifts_monthly if u['okr_shift_monthly'] > 0] if okr_shifts_monthly else [], "monthly"),
+            'issue_performers': self._generate_okr_table_html([u for u in okr_shifts if u['okr_shift'] < 0] if okr_shifts else []),
+            'issue_performers_monthly': self._generate_okr_table_html([u for u in okr_shifts_monthly if u['okr_shift_monthly'] < 0] if okr_shifts_monthly else [], "monthly"),
+            'top_overall': self._generate_checkin_overview_table_html(overall_checkins if overall_checkins else [])
         }
 
     def _generate_email_header(self, selected_cycle: Dict, current_date: str) -> str:
@@ -1320,7 +1320,7 @@ class EmailReportGenerator:
         # Top overall checkin section
         sections.append(f"""
         <div class="section">
-            <h2>🏆 TOP NHÂN VIÊN HOẠT ĐỘNG CHECKIN NHIỀU NHẤT</h2>
+            <h2>🏆 TẤT CẢ NHÂN VIÊN HOẠT ĐỘNG CHECKIN</h2>
             <div class="alert alert-info">
                 <strong>Thống kê:</strong> Xếp hạng dựa trên tổng số checkin và tần suất checkin từ đầu quý
             </div>
@@ -1332,8 +1332,8 @@ class EmailReportGenerator:
         section_configs = [
             (tables['goals'], "🚫 NHÂN VIÊN CHƯA CÓ OKR", "Cần hành động: Những nhân viên này cần được hỗ trợ thiết lập OKR."),
             (tables['goals_no_checkins'], "⚠️ CÓ OKR NHƯNG CHƯA CHECKIN", "Ưu tiên cao: Đã có mục tiêu nhưng chưa cập nhật tiến độ."),
-            (tables['top_performers'], "🏆 TOP NHÂN VIÊN TIẾN BỘ NHẤT (TUẦN)", None),
-            (tables['top_performers_monthly'], "🗓️ TOP NHÂN VIÊN TIẾN BỘ NHẤT (THÁNG)", None),
+            (tables['top_performers'], "🏆 TẤT CẢ NHÂN VIÊN TIẾN BỘ (TUẦN)", None),
+            (tables['top_performers_monthly'], "🗓️ TẤT CẢ NHÂN VIÊN TIẾN BỘ (THÁNG)", None),
             (tables['issue_performers'], "⚠️ NHÂN VIÊN CẦN HỖ TRỢ (TUẦN)", "Cần quan tâm: OKR của những nhân viên này đang giảm hoặc không tiến triển."),
             (tables['issue_performers_monthly'], "🗓️ NHÂN VIÊN CẦN HỖ TRỢ (THÁNG)", "Cần quan tâm: OKR tháng của những nhân viên này đang giảm hoặc không tiến triển.")
         ]
@@ -2176,10 +2176,10 @@ def _display_score_distribution(scores_df: pd.DataFrame):
 
 def _display_score_tables(scores_df: pd.DataFrame):
     """Display score tables"""
-    # Top performers
-    st.subheader("🏆 Top Performers")
-    top_performers = scores_df.nlargest(10, 'Score')
-    st.dataframe(top_performers, use_container_width=True, hide_index=True)
+    # All performers sorted by score
+    st.subheader("📊 Tất cả nhân viên có goal (sắp xếp theo điểm)")
+    all_performers = scores_df.sort_values('Score', ascending=False)
+    st.dataframe(all_performers, use_container_width=True, hide_index=True)
     
     # Users needing support
     low_performers_df = scores_df[scores_df['Score'] < 2.0]
@@ -2414,7 +2414,7 @@ def _display_okr_shift_chart(okr_shifts: List[Dict], shift_key: str, period_labe
     okr_df = pd.DataFrame(okr_shifts)
     
     fig = px.bar(
-        okr_df.head(20), 
+        okr_df, 
         x='user_name', 
         y=shift_key,
         title=f"Dịch chuyển OKR so với {reference_label} ({reference_date.strftime('%d/%m/%Y')})",
@@ -2433,12 +2433,12 @@ def _display_okr_tables(okr_shifts: List[Dict], shift_key: str, last_value_key: 
     """Display OKR performance tables"""
     okr_df = pd.DataFrame(okr_shifts)
     
-    # Top performers
-    st.subheader(f"🏆 Nhân viên tiến bộ nhất ({period_label})")
-    top_performers = okr_df[okr_df[shift_key] > 0].head(10)
-    if not top_performers.empty:
+    # All performers with positive shift
+    st.subheader(f"📈 Tất cả nhân viên tiến bộ ({period_label})")
+    positive_performers = okr_df[okr_df[shift_key] > 0]
+    if not positive_performers.empty:
         display_cols = ['user_name', shift_key, 'current_value', last_value_key]
-        display_df = top_performers[display_cols].round(2)
+        display_df = positive_performers[display_cols].round(2)
         display_df.columns = ['Nhân viên', f'Dịch chuyển ({period_label})', 'Giá trị hiện tại', f'Giá trị {reference_label}']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
@@ -2520,9 +2520,9 @@ def _display_overall_checkin_analysis(overall_checkins: List[Dict], quarter_star
     st.info(f"📅 Tuần trước: {monday_last_week.strftime('%d/%m/%Y')} - {sunday_last_week.strftime('%d/%m/%Y')}")
     st.info(f"📊 Tần suất checkin = Tổng checkin ÷ {weeks_in_quarter:.1f} tuần (từ đầu quý đến nay)")
     
-    # Display table
-    top_overall = overall_df.nlargest(20, 'total_checkins').copy()
-    display_df = top_overall[[
+    # Display table - all employees sorted by total checkins
+    all_overall = overall_df.sort_values('total_checkins', ascending=False).copy()
+    display_df = all_overall[[
         'user_name', 'total_checkins', 'checkin_frequency_per_week', 'last_week_checkins'
     ]].copy()
     
