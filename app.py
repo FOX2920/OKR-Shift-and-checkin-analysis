@@ -240,17 +240,24 @@ class UserManager:
                     last_month_end = DateUtils.get_last_month_end_date()
                     last_month_value = self._calculate_last_month_value_for_user(user_df, last_month_end)
                     
-                    # Áp dụng logic mới: Nếu giá trị cuối tháng trước > giá trị hiện tại 
-                    # thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
-                    adjusted_last_month_value = last_month_value
-                    if last_month_value > current_okr:
-                        adjusted_last_month_value = current_okr - monthly_shift
+                    # Áp dụng logic mới theo yêu cầu:
+                    # 1. Nếu giá trị cuối tháng trước > giá trị hiện tại thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
+                    # 2. Nếu giá trị cuối tháng trước < giá trị hiện tại và (giá trị hiện tại - giá trị cuối tháng trước) != dịch chuyển
+                    #    thì dịch chuyển tháng = giá trị hiện tại - giá trị cuối tháng trước
                     
-                    if monthly_shift > current_okr:
-                        adjusted_shift = current_okr - adjusted_last_month_value
-                        user.dich_chuyen_OKR = round(adjusted_shift, 2)
-                    else:
-                        user.dich_chuyen_OKR = round(monthly_shift, 2)
+                    final_shift = monthly_shift
+                    
+                    # Quy tắc 1: Nếu last_month_value > current_okr
+                    if last_month_value > current_okr:
+                        # Điều chỉnh reference value: last_month_value = current_okr - monthly_shift
+                        adjusted_last_month_value = current_okr - monthly_shift
+                        final_shift = monthly_shift  # Giữ nguyên shift
+                    
+                    # Quy tắc 2: Nếu last_month_value < current_okr VÀ (current_okr - last_month_value) != monthly_shift
+                    elif last_month_value < current_okr and (current_okr - last_month_value) != monthly_shift:
+                        final_shift = current_okr - last_month_value
+                    
+                    user.dich_chuyen_OKR = round(final_shift, 2)
                 else:
                     user.dich_chuyen_OKR = round(monthly_shift, 2)
             else:
@@ -1649,22 +1656,38 @@ class OKRAnalysisSystem:
         current_value = self.okr_calculator.calculate_current_value(user_df)
         reference_value, kr_details = self.okr_calculator.calculate_reference_value(reference_friday, user_df)
         
-        legacy_okr_shift = current_value - reference_value
-        adjusted_okr_shift = final_okr_goal_shift
-        adjustment_applied = False
+        # Áp dụng logic mới theo yêu cầu:
+        # 1. Nếu giá trị thứ 6 tuần trước > giá trị hiện tại thì giá trị thứ 6 = giá trị hiện tại - dịch chuyển tuần
+        # 2. Nếu giá trị thứ 6 tuần trước < giá trị hiện tại và (giá trị hiện tại - giá trị thứ 6 tuần trước) != dịch chuyển
+        #    thì dịch chuyển tuần = giá trị hiện tại - giá trị thứ 6 tuần trước
         
-        if final_okr_goal_shift > current_value:
+        adjusted_reference_value = reference_value
+        adjusted_okr_shift = final_okr_goal_shift
+        reference_adjustment_applied = False
+        shift_adjustment_applied = False
+        
+        # Quy tắc 1: Nếu reference_value > current_value
+        if reference_value > current_value:
+            adjusted_reference_value = current_value - final_okr_goal_shift
+            reference_adjustment_applied = True
+        
+        # Quy tắc 2: Nếu reference_value < current_value VÀ (current_value - reference_value) != shift
+        elif reference_value < current_value and (current_value - reference_value) != final_okr_goal_shift:
             adjusted_okr_shift = current_value - reference_value
-            adjustment_applied = True
+            shift_adjustment_applied = True
+        
+        legacy_okr_shift = current_value - reference_value
 
         return {
             'user_name': user_name,
             'okr_shift': adjusted_okr_shift,
             'original_shift': final_okr_goal_shift,
             'current_value': current_value,
-            'last_friday_value': reference_value,
+            'last_friday_value': adjusted_reference_value,
+            'original_last_friday_value': reference_value,
             'legacy_okr_shift': legacy_okr_shift,
-            'adjustment_applied': adjustment_applied,
+            'adjustment_applied': shift_adjustment_applied,
+            'reference_adjustment_applied': reference_adjustment_applied,
             'kr_details_count': len(kr_details),
             'reference_friday': reference_friday.strftime('%d/%m/%Y')
         }
