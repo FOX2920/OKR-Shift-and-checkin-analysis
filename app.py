@@ -174,7 +174,7 @@ class UserManager:
                 has_okr = 1 if name in self.users_with_okr_names else 0
                 
                 users[user_id] = User(user_id, name, co_OKR=has_okr)
-        
+
         return users
 
     def update_checkins(self, start_date=None, end_date=None):
@@ -1925,7 +1925,7 @@ def create_user_manager_with_monthly_calculation(analyzer):
         
         krs_df = _extract_krs_data_for_user_manager(analyzer)
         checkin_df = _extract_checkin_data_for_user_manager(analyzer)
-        
+
         # Truyền danh sách users có OKR vào UserManager để đánh dấu chính xác
         return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, users_with_okr_data)
     else:
@@ -2135,7 +2135,7 @@ def get_default_recipients() -> List[str]:
 
 def show_user_score_analysis(analyzer):
     """Show user score analysis using integrated monthly calculation"""
-    st.subheader("🏆 User Score Analysis - All Filtered Members (Has OKR: Yes + No)")
+    st.subheader("🏆 User Score Analysis - OKR Count Must Match Monthly OKR Analysis")
     
     try:
         # Thông báo về phạm vi phân tích
@@ -2163,9 +2163,14 @@ def show_user_score_analysis(analyzer):
             
             st.success(f"✅ Score Analysis complete: {score_count} total users ({users_with_okr} with OKR + {users_without_okr} without OKR)")
             
-            if analyzer.final_df is not None and not analyzer.final_df.empty:
-                okr_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
-                st.info(f"📊 OKR Analysis covers: {okr_count} users with OKR data")
+            # Validation với Monthly OKR Analysis
+            if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
+                monthly_okr_count = st.session_state['monthly_okr_count']
+                if users_with_okr == monthly_okr_count:
+                    st.success(f"✅ PERFECT CONSISTENCY: {users_with_okr} users with OKR matches Monthly OKR Analysis ({monthly_okr_count} users)")
+                else:
+                    st.error(f"❌ MISMATCH DETECTED: Score Analysis has {users_with_okr} users with OKR, but Monthly OKR Analysis has {monthly_okr_count} users")
+                    st.error("🔄 Please ensure Monthly OKR Analysis runs before Score Analysis for consistency")
             
             if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
                 total_filtered = len(analyzer.filtered_members_df)
@@ -2233,7 +2238,7 @@ def _display_score_distribution(scores_df: pd.DataFrame):
 def _display_score_tables(scores_df: pd.DataFrame):
     """Display score tables"""
     # All performers sorted by score
-    st.subheader("📊 Tất cả nhân viên (sắp xếp theo điểm)")
+    st.subheader("📊 Tất cả nhân viên (Has OKR count must match Monthly OKR Analysis)")
     all_performers = scores_df.sort_values('Score', ascending=False)
     st.dataframe(all_performers, use_container_width=True, hide_index=True)
     
@@ -2854,6 +2859,13 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if DateUtils.should_calculate_monthly_shift() else []
         
+        # Lưu danh sách users từ Monthly OKR Analysis cho Excel consistency
+        if okr_shifts_monthly:
+            monthly_okr_users = set([shift['user_name'] for shift in okr_shifts_monthly])
+            st.session_state['monthly_okr_users'] = monthly_okr_users
+            st.session_state['monthly_okr_count'] = len(monthly_okr_users)
+            st.info(f"💾 Email: Monthly OKR users saved for Excel consistency: {len(monthly_okr_users)} users")
+        
         # Create Excel for recipients
         status_text.text("Creating Excel report...")
         progress_bar.progress(0.6)
@@ -2955,9 +2967,13 @@ def _create_excel_report(analyzer) -> BytesIO:
     
     st.success(f"✅ Excel export ready: {excel_user_count} total users ({users_with_okr_in_excel} with OKR + {users_without_okr_in_excel} without OKR)")
     
-    if analyzer.final_df is not None and not analyzer.final_df.empty:
-        okr_user_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
-        st.info(f"📊 Includes all {okr_user_count} users with OKR data + all users without OKR data")
+    # Validation với Monthly OKR Analysis
+    if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
+        monthly_okr_count = st.session_state['monthly_okr_count']
+        if users_with_okr_in_excel == monthly_okr_count:
+            st.success(f"✅ EXCEL CONSISTENCY: {users_with_okr_in_excel} users with OKR matches Monthly OKR Analysis ({monthly_okr_count} users)")
+        else:
+            st.error(f"❌ EXCEL MISMATCH: Excel has {users_with_okr_in_excel} users with OKR, but Monthly OKR Analysis has {monthly_okr_count} users")
     
     wb = export_to_excel(users)
     excel_buffer = BytesIO()
@@ -3176,7 +3192,7 @@ def setup_enhanced_email_configuration(analyzer):
             format_func=lambda x: {
                 "special": "Special recipients only (tts122403@gmail.com)",
                 "all": "All filtered members",
-                "all_with_goals": "All members with goals (Excel contains all filtered members)",
+                "all_with_goals": "All members with goals (Excel OKR count matches Monthly OKR Analysis)",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
             index=0  # Mặc định chọn all_with_goals
@@ -3206,7 +3222,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
                 if total_email_count > 0:
                     st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
                     st.info("📎 Excel attachment will be included for all recipients")
-                    st.info(f"📋 Will send to all {total_email_count} members (Excel contains all filtered members: both with OKR and without OKR)")
+                    st.info(f"📋 Will send to all {total_email_count} members (Excel OKR count will match Monthly OKR Analysis)")
                 else:
                     st.warning("⚠️ Found 0 valid email addresses in filtered members")
                     
@@ -3275,7 +3291,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         st.session_state[auto_run_key] = True
         with st.spinner("🚀 Auto-running analysis..."):
             run_analysis(analyzer, selected_cycle, show_missing_analysis)
-    
+
     # Main action buttons
     col1, col2 = st.columns(2)
     
