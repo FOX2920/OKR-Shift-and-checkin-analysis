@@ -2215,8 +2215,8 @@ def _display_score_metrics(scores_df: pd.DataFrame):
         st.metric("High Performers (≥3.0)", high_performers)
     
     with col3:
-        low_performers = len(scores_df[scores_df['Score'] < 2.0])
-        st.metric("Need Support (<2.0)", low_performers)
+        median_score = scores_df['Score'].median()
+        st.metric("Median Score", f"{median_score:.2f}")
     
     with col4:
         has_okr_count = len(scores_df[scores_df['Has OKR'] == 'Yes'])
@@ -2239,12 +2239,6 @@ def _display_score_tables(scores_df: pd.DataFrame):
     st.subheader("📊 Tất cả nhân viên (OKR Movement from Monthly Shift)")
     all_performers = scores_df.sort_values('Score', ascending=False)
     st.dataframe(all_performers, use_container_width=True, hide_index=True)
-    
-    # Users needing support
-    low_performers_df = scores_df[scores_df['Score'] < 2.0]
-    if not low_performers_df.empty:
-        st.subheader("⚠️ Users Needing Support")
-        st.dataframe(low_performers_df, use_container_width=True, hide_index=True)
 
 def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
     """Display export options for scores"""
