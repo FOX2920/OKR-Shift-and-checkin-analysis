@@ -141,12 +141,13 @@ class User:
 class UserManager:
     """Manages user data and calculations"""
     
-    def __init__(self, account_df, krs_df, checkin_df, cycle_df=None, final_df=None):
+    def __init__(self, account_df, krs_df, checkin_df, cycle_df=None, final_df=None, users_with_okr_names=None):
         self.account_df = account_df
         self.krs_df = krs_df
         self.checkin_df = checkin_df
         self.cycle_df = cycle_df
         self.final_df = final_df
+        self.users_with_okr_names = users_with_okr_names or set()  # Danh sách tên users có OKR
         
         self.user_name_map = self._create_user_name_map()
         self.users = self._create_users()
@@ -160,18 +161,20 @@ class UserManager:
         return user_map
 
     def _create_users(self) -> Dict[str, User]:
-        """Create User objects from KRs data"""
+        """Create User objects for ALL account members, with accurate OKR marking"""
         users = {}
-        unique_user_ids = set()
-
-        if not self.krs_df.empty and 'user_id' in self.krs_df.columns:
-            for _, kr in self.krs_df.iterrows():
-                user_id = str(kr.get("user_id"))
-                if user_id and user_id not in unique_user_ids and user_id in self.user_name_map:
-                    name = self.user_name_map[user_id]
-                    users[user_id] = User(user_id, name)
-                    unique_user_ids.add(user_id)
-
+        
+        # Tạo users cho TẤT CẢ account_df
+        if not self.account_df.empty and 'id' in self.account_df.columns and 'name' in self.account_df.columns:
+            for _, row in self.account_df.iterrows():
+                user_id = str(row.get('id'))
+                name = row.get('name', 'Unknown')
+                
+                # Chỉ đánh dấu co_OKR=1 nếu tên user có trong danh sách users_with_okr_names
+                has_okr = 1 if name in self.users_with_okr_names else 0
+                
+                users[user_id] = User(user_id, name, co_OKR=has_okr)
+        
         return users
 
     def update_checkins(self, start_date=None, end_date=None):
@@ -1901,10 +1904,17 @@ def create_user_manager_with_monthly_calculation(analyzer):
         # Sử dụng tất cả filtered_members_df làm account_df
         account_df = analyzer.filtered_members_df.copy()
         
-        # Xác định users có OKR data
+        # Xác định users có OKR data - ưu tiên từ Monthly OKR Analysis nếu có
         users_with_okr_data = set()
-        if analyzer.final_df is not None and not analyzer.final_df.empty:
+        
+        if 'monthly_okr_users' in st.session_state and st.session_state['monthly_okr_users']:
+            # Sử dụng danh sách từ Monthly OKR Analysis để đảm bảo consistency
+            users_with_okr_data = st.session_state['monthly_okr_users']
+            st.info(f"🔄 Using Monthly OKR Analysis users list for consistency: {len(users_with_okr_data)} users")
+        elif analyzer.final_df is not None and not analyzer.final_df.empty:
+            # Fallback nếu chưa có Monthly OKR Analysis
             users_with_okr_data = set(analyzer.final_df['goal_user_name'].dropna().unique())
+            st.warning(f"⚠️ Using final_df for OKR users (Monthly OKR Analysis not yet run): {len(users_with_okr_data)} users")
         
         # Thông báo về tổng số users
         total_users = len(account_df)
@@ -1915,11 +1925,14 @@ def create_user_manager_with_monthly_calculation(analyzer):
         
         krs_df = _extract_krs_data_for_user_manager(analyzer)
         checkin_df = _extract_checkin_data_for_user_manager(analyzer)
+        
+        # Truyền danh sách users có OKR vào UserManager để đánh dấu chính xác
+        return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, users_with_okr_data)
     else:
         account_df = analyzer.filtered_members_df if analyzer.filtered_members_df is not None else pd.DataFrame()
         krs_df, checkin_df = pd.DataFrame(), pd.DataFrame()
-
-    return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df)
+        
+        return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, set())
 
 def _extract_krs_data_for_user_manager(analyzer) -> pd.DataFrame:
     """Extract KRs data for UserManager from final_df"""
@@ -2692,7 +2705,13 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
                 okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly()
             
             if okr_shifts_monthly:
+                # Lưu danh sách users từ Monthly OKR Analysis cho consistency check
+                monthly_okr_users = set([shift['user_name'] for shift in okr_shifts_monthly])
+                st.session_state['monthly_okr_users'] = monthly_okr_users
+                st.session_state['monthly_okr_count'] = len(monthly_okr_users)
+                
                 show_okr_analysis(okr_shifts_monthly, DateUtils.get_last_month_end_date(), "monthly")
+                st.info(f"💾 Monthly OKR Analysis: {len(monthly_okr_users)} users saved for consistency check")
             else:
                 st.warning("No monthly OKR shift data available")
         else:
