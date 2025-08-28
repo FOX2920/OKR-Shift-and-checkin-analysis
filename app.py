@@ -3129,51 +3129,45 @@ def setup_enhanced_email_configuration(analyzer):
         )
         
         # Display recipient info với analyzer
-        _display_recipient_info_with_count(recipient_option, analyzer)
+        _display_recipient_email_list(recipient_option, analyzer)
         
         return recipient_option, None
 
+def _display_recipient_email_list(recipient_option: str, analyzer=None, selected_okr_emails: Optional[List[str]] = None):
+    """Display recipient email list in sidebar"""
+    st.markdown("---")
+    st.markdown("📧 **Danh sách email sẽ gửi:**")
+    
+    try:
+        # Get actual email recipients
+        recipients = _get_email_recipients(analyzer, recipient_option, selected_okr_emails)
+        
+        if not recipients:
+            st.warning("⚠️ Không tìm thấy email nào để gửi")
+            return
+            
+        # Display email count
+        st.success(f"📊 Tổng số: **{len(recipients)} email**")
+        
+        # Display email list in scrollable container
+        with st.container():
+            # Show first few emails directly
+            display_count = min(5, len(recipients))
+            for i, email in enumerate(recipients[:display_count]):
+                st.text(f"{i+1}. {email}")
+            
+            # Show remaining emails in expander if more than 5
+            if len(recipients) > 5:
+                with st.expander(f"👀 Xem thêm {len(recipients) - 5} email khác"):
+                    for i, email in enumerate(recipients[5:], start=6):
+                        st.text(f"{i}. {email}")
+                        
+    except Exception as e:
+        st.error(f"❌ Lỗi khi lấy danh sách email: {str(e)}")
+
 def _display_recipient_info_with_count(recipient_option: str, analyzer=None, selected_okr_emails: Optional[List[str]] = None):
-    """Display recipient information with email count"""
-    if recipient_option == "all":
-        if analyzer and analyzer.filtered_members_df is not None:
-            email_count = get_all_member_emails_count(analyzer)
-        pass
-    elif recipient_option == "special":
-        pass
-    elif recipient_option == "all_with_goals":
-        if analyzer:
-            try:
-                # Đếm tổng số email hợp lệ
-                total_email_count = get_all_member_emails_count(analyzer)
-                
-                if total_email_count > 0:
-                    st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
-
-                else:
-                    st.warning("⚠️ Found 0 valid email addresses in filtered members")
-                    
-            except Exception as e:
-                st.error(f"Error counting emails: {e}")
-        else:
-            pass
-    elif recipient_option == "okr_users":
-        if analyzer:
-            try:
-                total_email_count = get_total_user_emails_count(analyzer)
-
-                st.success(f"📧 Available emails in total users: {total_email_count}")
-
-                    
-            except Exception as e:
-                st.error(f"Error counting emails: {e}")
-        else:
-            pass
-    elif recipient_option == "select_okr_users":
-        if selected_okr_emails:
-            pass
-        else:
-            st.warning("No OKR users selected")
+    """Display recipient information with email count (legacy function - deprecated)"""
+    pass
 
 def main():
     """Main application entry point"""
