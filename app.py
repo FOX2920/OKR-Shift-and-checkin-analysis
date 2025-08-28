@@ -2886,10 +2886,10 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     elif recipient_option == "special":
         recipients = get_default_recipients()
     elif recipient_option == "all_with_goals":
-        # Lấy email từ tất cả filtered members
-        recipients = get_email_list(analyzer)
+        # Lấy email từ những người thực sự có goal (goal_user_name)
+        recipients = get_emails_from_total_users_in_summary(analyzer)
         if not recipients:
-            st.error("Không tìm thấy email trong danh sách filtered members")
+            st.error("Không tìm thấy email của nhân viên có goal")
             return []
     elif recipient_option == "okr_users":
         recipients = get_emails_of_total_users_with_okr(analyzer)
@@ -3119,7 +3119,7 @@ def setup_enhanced_email_configuration(analyzer):
             format_func=lambda x: {
                 "special": "Special recipients only (tts122403@gmail.com)",
                 "all": "All filtered members (backup option)",
-                "all_with_goals": "Filtered Members (chính thức)",
+                "all_with_goals": "Nhân viên có Goal (thực sự)",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
             index=0  # Mặc định chọn all_with_goals
