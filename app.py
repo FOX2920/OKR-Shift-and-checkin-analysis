@@ -2970,17 +2970,29 @@ def get_emails_from_total_users_in_summary(analyzer) -> List[str]:
                 
                 total_users_emails.append(str(member_email).strip())
         
+        # Always add default admin email to users with goals
+        admin_email = "xnk3@apluscorp.vn"
+        
         # Return users with goals emails, or fallback to all if none found
         if total_users_emails:
-            st.success(f"✅ Found {len(total_users_emails)} emails for users with goals")
-            return list(set(total_users_emails))
+            # Add admin email to the list
+            total_users_emails.append(admin_email)
+            final_emails = list(set(total_users_emails))  # Remove duplicates
+            st.success(f"✅ Found {len(final_emails)} emails for users with goals (including admin)")
+            return final_emails
         else:
-            st.warning(f"⚠️ No email matches found for users with goals. Fallback to all {len(all_member_emails)} member emails")
-            return all_member_emails
+            # Add admin email to fallback list too
+            all_member_emails.append(admin_email)
+            final_emails = list(set(all_member_emails))
+            st.warning(f"⚠️ No email matches found for users with goals. Fallback to all {len(final_emails)} member emails (including admin)")
+            return final_emails
         
     except Exception as e:
         st.error(f"❌ Error getting emails: {str(e)}")
-        return get_email_list(analyzer)  # Ultimate fallback
+        # Ultimate fallback - always include admin email
+        fallback_emails = get_email_list(analyzer)
+        fallback_emails.append("xnk3@apluscorp.vn")
+        return list(set(fallback_emails))
 
 def get_emails_of_okr_users(analyzer) -> List[str]:
     """Get email list of users who have OKRs (legacy function, now uses Total Users)"""
@@ -3137,7 +3149,7 @@ def setup_enhanced_email_configuration(analyzer):
             format_func=lambda x: {
                 "special": "Special recipients only (tts122403@gmail.com)",
                 "all": "All filtered members (backup option)",
-                "all_with_goals": "Nhân viên có Goal (thực sự)",
+                "all_with_goals": "Nhân viên có Goal + Admin",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
             index=0  # Mặc định chọn all_with_goals
