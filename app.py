@@ -2957,6 +2957,11 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     elif recipient_option == "all_with_goals":
         # Lấy email từ những người thực sự có goal (goal_user_name)
         recipients = get_emails_from_total_users_in_summary(analyzer)
+        
+        # Đảm bảo admin email luôn có trong danh sách
+        admin_email = "xnk3@apluscorp.vn"
+        if admin_email not in recipients:
+            recipients.append(admin_email)
     elif recipient_option == "okr_users":
         recipients = get_emails_of_total_users_with_okr(analyzer)
         if not recipients:
@@ -3237,6 +3242,12 @@ def _display_recipient_email_list(recipient_option: str, analyzer=None, selected
     try:
         # Get actual email recipients
         recipients = _get_email_recipients(analyzer, recipient_option, selected_okr_emails)
+        
+        # Đảm bảo admin email luôn có trong danh sách "all_with_goals"
+        admin_email = "xnk3@apluscorp.vn"
+        if recipient_option == "all_with_goals" and admin_email not in recipients:
+            recipients.append(admin_email)
+            st.info(f"✅ Đã thêm admin email: {admin_email}")
         
         if not recipients:
             st.warning("⚠️ Không tìm thấy email nào để gửi")
