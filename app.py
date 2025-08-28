@@ -88,6 +88,27 @@ class DateUtils:
     def should_calculate_monthly_shift() -> bool:
         """Check if monthly shift should be calculated (not in months 1,4,7,10)"""
         return datetime.now().month not in QUARTER_START_MONTHS
+    
+    @staticmethod
+    def is_last_week_of_month() -> bool:
+        """Check if current week is the last week of the month"""
+        today = datetime.now()
+        
+        # Tìm ngày cuối tháng
+        if today.month == 12:
+            next_month_first = datetime(today.year + 1, 1, 1)
+        else:
+            next_month_first = datetime(today.year, today.month + 1, 1)
+        
+        last_day_of_month = next_month_first - timedelta(days=1)
+        
+        # Tìm tuần hiện tại (Monday to Sunday)
+        days_since_monday = today.weekday()
+        monday_this_week = today - timedelta(days=days_since_monday)
+        sunday_this_week = monday_this_week + timedelta(days=6)
+        
+        # Kiểm tra xem tuần hiện tại có chứa ngày cuối tháng không
+        return monday_this_week <= last_day_of_month <= sunday_this_week
 
 
 class User:
@@ -112,7 +133,7 @@ class User:
         score = 0.5
         
         # Check-in contributes 0.5 points
-        # Có check-in ít nhất 3 tuần trong tháng hiện tại → +0.5 điểm
+        # Logic tính checkin score được handle ở UserManager level
         if self.checkin == 1:
             score += 0.5
         
@@ -408,9 +429,38 @@ class UserManager:
             return 0
 
     def calculate_scores(self):
-        """Calculate scores for all users"""
+        """Calculate scores for all users with 3-week checkin criteria"""
+        # Chỉ tính checkin score khi ở tuần cuối cùng của tháng
+        is_last_week = DateUtils.is_last_week_of_month()
+        
+        # Collect debug info for last week of month
+        debug_info = {"pass": [], "fail": []}
+        
         for user in self.users.values():
+            # Reset checkin status trước khi tính score
+            if is_last_week:
+                # Chỉ khi ở tuần cuối cùng mới check 3 tuần criteria
+                meets_criteria = self._meets_monthly_weekly_criteria(user.user_id)
+                user.checkin = 1 if meets_criteria else 0
+                
+                # Collect debug info
+                if meets_criteria:
+                    debug_info["pass"].append(user.name)
+                else:
+                    debug_info["fail"].append(user.name)
+            else:
+                # Các tuần khác không tính điểm checkin
+                user.checkin = 0
+            
             user.calculate_score()
+        
+        # Display debug info in expander (only during last week)
+        if is_last_week and (debug_info["pass"] or debug_info["fail"]):
+            with st.expander(f"🔍 Chi tiết kiểm tra 3 tuần checkin ({len(debug_info['pass']) + len(debug_info['fail'])} người)"):
+                if debug_info["pass"]:
+                    st.success(f"✅ **Đạt 3 tuần ({len(debug_info['pass'])} người)**: {', '.join(debug_info['pass'])}")
+                if debug_info["fail"]:
+                    st.warning(f"⚠️ **Chưa đạt 3 tuần ({len(debug_info['fail'])} người)**: {', '.join(debug_info['fail'])}")
 
     def get_users(self) -> List[User]:
         """Return list of all users"""
@@ -2157,8 +2207,27 @@ def show_user_score_analysis(analyzer):
         if not scores_df.empty:
             _display_score_metrics(scores_df)
             _display_score_distribution(scores_df)
-            _display_score_tables(scores_df)
-            _display_score_export_options(scores_df, users)
+            
+            # Thông báo logic tính điểm checkin
+            st.markdown("### 📋 Logic tính điểm Checkin:")
+            st.markdown("""
+            - 📅 **Điều kiện**: Nhân viên có ít nhất **3 tuần check-in** trong tháng hiện tại
+            - 🎯 **Điểm số**: Đủ 3 tuần → **+0.5 điểm**, không đủ → **+0 điểm**
+            - ⏰ **Thời điểm hiển thị**: Chỉ vào **tuần cuối cùng của tháng**
+            """)
+            
+            # Chỉ hiển thị score tables khi ở tuần cuối cùng của tháng
+            if DateUtils.is_last_week_of_month():
+                st.success("✅ **Đang ở tuần cuối cùng của tháng** - Hiển thị điểm checkin dựa trên tiêu chí 3 tuần")
+                _display_score_tables(scores_df)
+                _display_score_export_options(scores_df, users)
+            else:
+                st.warning("⏳ **Chưa phải tuần cuối tháng** - Score tables sẽ hiển thị với điểm checkin thực tế vào tuần cuối cùng")
+                # Vẫn hiển thị score tables nhưng với thông báo
+                st.info("💡 **Bảng điểm hiện tại** (chưa tính điểm checkin 3 tuần):")
+                _display_score_tables(scores_df)
+                _display_score_export_options(scores_df, users)
+            
             return scores_df
         else:
             return pd.DataFrame()
