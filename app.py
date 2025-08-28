@@ -2886,13 +2886,11 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     elif recipient_option == "special":
         recipients = get_default_recipients()
     elif recipient_option == "all_with_goals":
-        # Lấy email của tất cả members, ưu tiên OKR users nếu có data
-        recipients = get_emails_of_okr_users(analyzer)
+        # Lấy email từ Total Users trong Data Summary
+        recipients = get_emails_from_total_users_in_summary(analyzer)
         if not recipients:
-            recipients = get_email_list(analyzer)
-            if not recipients:
-                st.error("No email addresses found in member data")
-                return []
+            st.error("Không tìm thấy email của Total Users trong Data Summary")
+            return []
     elif recipient_option == "okr_users":
         recipients = get_emails_of_total_users_with_okr(analyzer)
         if not recipients:
@@ -2934,49 +2932,41 @@ def setup_sidebar_configuration():
         
         return goal_token, account_token
 
-def get_emails_of_okr_users(analyzer) -> List[str]:
-    """Get email list of users who have OKRs"""
+def get_emails_from_total_users_in_summary(analyzer) -> List[str]:
+    """Get email list from Total Users shown in Data Summary"""
     try:
-        if analyzer.filtered_members_df is None:
+        if analyzer.filtered_members_df is None or analyzer.final_df is None:
             return []
         
         # Check email column
         if 'email' not in analyzer.filtered_members_df.columns:
             return []
         
-        # Get all valid emails from filtered members first
-        all_member_emails = []
-        for _, member in analyzer.filtered_members_df.iterrows():
-            email = member.get('email', '')
-            if pd.notna(email) and str(email).strip() and '@' in str(email):
-                all_member_emails.append(str(email).strip())
+        # Get Total Users - đúng như trong Data Summary: df['goal_user_name'].nunique()
+        total_users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
         
-        # If final_df is not loaded yet, return all valid member emails
-        # (This is better than returning empty list)
-        if analyzer.final_df is None or analyzer.final_df.empty:
-            return all_member_emails
-        
-        # Get users who have goals/OKRs
-        users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
-        
-        # Match by name and get emails
-        okr_users_emails = []
+        # Match by name and get emails from filtered members
+        total_users_emails = []
         for _, member in analyzer.filtered_members_df.iterrows():
             member_name = member.get('name', '')
             member_email = member.get('email', '')
             
-            if (member_name in users_with_goals and 
+            # Chỉ lấy email của những người có tên trong Total Users
+            if (member_name in total_users_with_goals and 
                 pd.notna(member_email) and 
                 str(member_email).strip() and 
                 '@' in str(member_email)):
                 
-                okr_users_emails.append(str(member_email).strip())
+                total_users_emails.append(str(member_email).strip())
         
-        # Return OKR user emails if found, otherwise all member emails
-        return okr_users_emails if okr_users_emails else all_member_emails
+        return list(set(total_users_emails))  # Remove duplicates
         
     except Exception as e:
         return []
+
+def get_emails_of_okr_users(analyzer) -> List[str]:
+    """Get email list of users who have OKRs (legacy function, now uses Total Users)"""
+    return get_emails_from_total_users_in_summary(analyzer)
 
 def setup_cycle_selection(analyzer) -> Dict:
     """Setup cycle selection in sidebar"""
@@ -3013,6 +3003,13 @@ def setup_cycle_selection(analyzer) -> Dict:
         st.info(f"🎯 **Selected:** {selected_cycle['name']}")
         
         return selected_cycle
+
+def get_total_users_emails_count(analyzer) -> int:
+    """Get count of Total Users emails (for Data Summary)"""
+    try:
+        return len(get_emails_from_total_users_in_summary(analyzer))
+    except Exception as e:
+        return 0
 
 def get_all_member_emails_count(analyzer) -> int:
     """Get count of all member emails for sidebar display"""
@@ -3122,7 +3119,7 @@ def setup_enhanced_email_configuration(analyzer):
             format_func=lambda x: {
                 "special": "Special recipients only (tts122403@gmail.com)",
                 "all": "All filtered members",
-                "all_with_goals": "All members with goals (Excel contains Monthly OKR Movement)",
+                "all_with_goals": "Total Users (trong Data Summary)",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
             index=0  # Mặc định chọn all_with_goals
