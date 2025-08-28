@@ -2930,19 +2930,33 @@ def setup_sidebar_configuration():
         return goal_token, account_token
 
 def get_emails_from_total_users_in_summary(analyzer) -> List[str]:
-    """Get email list from Total Users shown in Data Summary"""
+    """Get email list from Total Users shown in Data Summary with fallback"""
     try:
-        if analyzer.filtered_members_df is None or analyzer.final_df is None:
+        if analyzer.filtered_members_df is None:
+            st.warning("⚠️ Filtered members data not loaded yet")
             return []
+            
+        if analyzer.final_df is None:
+            st.warning("⚠️ Final data not loaded yet, returning all valid emails")
+            return get_email_list(analyzer)  # Fallback to all filtered members
         
         # Check email column
         if 'email' not in analyzer.filtered_members_df.columns:
+            st.error("❌ No email column found in member data")
             return []
         
         # Get Total Users - đúng như trong Data Summary: df['goal_user_name'].nunique()
         total_users_with_goals = set(analyzer.final_df['goal_user_name'].dropna().unique())
+        st.info(f"🎯 Found {len(total_users_with_goals)} users with goals: {list(total_users_with_goals)[:5]}...")
         
-        # Match by name and get emails from filtered members
+        # Get all valid emails from filtered members
+        all_member_emails = []
+        for _, member in analyzer.filtered_members_df.iterrows():
+            member_email = member.get('email', '')
+            if pd.notna(member_email) and str(member_email).strip() and '@' in str(member_email):
+                all_member_emails.append(str(member_email).strip())
+        
+        # Match by name and get emails from filtered members with goals
         total_users_emails = []
         for _, member in analyzer.filtered_members_df.iterrows():
             member_name = member.get('name', '')
@@ -2956,10 +2970,17 @@ def get_emails_from_total_users_in_summary(analyzer) -> List[str]:
                 
                 total_users_emails.append(str(member_email).strip())
         
-        return list(set(total_users_emails))  # Remove duplicates
+        # Return users with goals emails, or fallback to all if none found
+        if total_users_emails:
+            st.success(f"✅ Found {len(total_users_emails)} emails for users with goals")
+            return list(set(total_users_emails))
+        else:
+            st.warning(f"⚠️ No email matches found for users with goals. Fallback to all {len(all_member_emails)} member emails")
+            return all_member_emails
         
     except Exception as e:
-        return []
+        st.error(f"❌ Error getting emails: {str(e)}")
+        return get_email_list(analyzer)  # Ultimate fallback
 
 def get_emails_of_okr_users(analyzer) -> List[str]:
     """Get email list of users who have OKRs (legacy function, now uses Total Users)"""
