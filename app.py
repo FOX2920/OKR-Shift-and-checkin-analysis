@@ -2888,9 +2888,6 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     elif recipient_option == "all_with_goals":
         # Lấy email từ những người thực sự có goal (goal_user_name)
         recipients = get_emails_from_total_users_in_summary(analyzer)
-        if not recipients:
-            st.error("Không tìm thấy email của nhân viên có goal")
-            return []
     elif recipient_option == "okr_users":
         recipients = get_emails_of_total_users_with_okr(analyzer)
         if not recipients:
