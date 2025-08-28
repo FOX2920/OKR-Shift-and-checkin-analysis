@@ -185,11 +185,7 @@ class UserManager:
                 user.checkin = 1
 
     def _has_weekly_checkins(self, user_id, start_date=None, end_date=None) -> bool:
-        """
-        Kiểm tra user có check-in hàng tuần/hàng tháng không:
-        - Xem có check-in ít nhất 1 lần mỗi tuần
-        - Nếu đã trôi qua 8 tuần thì trong 7 tuần qua ít nhất mỗi tuần có 1 lần check-in
-        """
+        """Check if user has checkins in at least 3 weeks within specified period"""
         if start_date is None:
             start_date = DateUtils.get_quarter_start_date().date()
         if end_date is None:
@@ -204,43 +200,8 @@ class UserManager:
         if not checkins_in_range:
             return False
         
-        # Tính số tuần từ start_date đến end_date
-        total_weeks = (end_datetime.date() - start_datetime.date()).days // 7 + 1
-        
-        # Nếu đã trôi qua 8 tuần, chỉ kiểm tra 7 tuần gần nhất
-        if total_weeks >= 8:
-            # Tính ngày bắt đầu của 7 tuần gần nhất
-            weeks_to_check = 7
-            check_start_date = end_datetime.date() - timedelta(weeks=weeks_to_check)
-            check_start_datetime = datetime.combine(check_start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-            
-            # Lọc check-ins trong 7 tuần gần nhất
-            recent_checkins = [dt for dt in checkins_in_range if dt >= check_start_datetime]
-            
-            if not recent_checkins:
-                return False
-                
-            # Kiểm tra mỗi tuần có ít nhất 1 check-in
-            weekly_checkins = set()
-            for dt in recent_checkins:
-                # Tính tuần dựa trên ngày bắt đầu kiểm tra
-                days_from_start = (dt.date() - check_start_date).days
-                week_number = days_from_start // 7
-                weekly_checkins.add(week_number)
-            
-            # Yêu cầu có check-in trong ít nhất 5/7 tuần gần nhất (threshold có thể điều chỉnh)
-            return len(weekly_checkins) >= 5
-        else:
-            # Nếu chưa đủ 8 tuần, kiểm tra theo logic cũ nhưng linh hoạt hơn
-            weekly_checkins = set()
-            for dt in checkins_in_range:
-                days_from_start = (dt.date() - start_datetime.date()).days
-                week_number = days_from_start // 7
-                weekly_checkins.add(week_number)
-            
-            # Yêu cầu có check-in trong ít nhất 60% số tuần đã trôi qua
-            required_weeks = max(1, int(total_weeks * 0.6))
-            return len(weekly_checkins) >= required_weeks
+        weekly_checkins = set(dt.isocalendar()[1] for dt in checkins_in_range)
+        return len(weekly_checkins) >= MIN_WEEKLY_CHECKINS
 
     def _get_user_checkins(self, user_id) -> List[datetime]:
         """Get all checkin dates for a user"""
@@ -254,71 +215,6 @@ class UserManager:
                 except (ValueError, TypeError):
                     continue
         return checkins
-
-    def get_user_checkin_stats(self, user_id, start_date=None, end_date=None) -> Dict:
-        """
-        Lấy thống kê chi tiết về check-in của user:
-        - Tổng số check-in trong khoảng thời gian
-        - Số tuần có check-in / tổng số tuần
-        - Tần suất check-in hàng tuần
-        """
-        if start_date is None:
-            start_date = DateUtils.get_quarter_start_date().date()
-        if end_date is None:
-            end_date = date.today()
-            
-        start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-        end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
-        
-        checkins = self._get_user_checkins(user_id)
-        checkins_in_range = [dt for dt in checkins if start_datetime <= dt <= end_datetime]
-        
-        total_weeks = (end_datetime.date() - start_datetime.date()).days // 7 + 1
-        
-        if not checkins_in_range:
-            return {
-                'total_checkins': 0,
-                'weeks_with_checkins': 0,
-                'total_weeks': total_weeks,
-                'checkin_frequency': '0/tuần',
-                'status': 'Không có check-in'
-            }
-        
-        # Đếm số tuần có check-in
-        weekly_checkins = set()
-        for dt in checkins_in_range:
-            days_from_start = (dt.date() - start_datetime.date()).days
-            week_number = days_from_start // 7
-            weekly_checkins.add(week_number)
-        
-        weeks_with_checkins = len(weekly_checkins)
-        frequency_per_week = len(checkins_in_range) / max(1, total_weeks)
-        
-        # Kiểm tra nếu đã trôi qua 8 tuần thì xem 7 tuần gần nhất
-        if total_weeks >= 8:
-            check_start_date = end_datetime.date() - timedelta(weeks=7)
-            check_start_datetime = datetime.combine(check_start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-            
-            recent_checkins = [dt for dt in checkins_in_range if dt >= check_start_datetime]
-            recent_weekly_checkins = set()
-            
-            for dt in recent_checkins:
-                days_from_start = (dt.date() - check_start_date).days
-                week_number = days_from_start // 7
-                recent_weekly_checkins.add(week_number)
-            
-            recent_weeks_with_checkins = len(recent_weekly_checkins)
-            status = f"{recent_weeks_with_checkins}/7 tuần gần nhất"
-        else:
-            status = f"{weeks_with_checkins}/{total_weeks} tuần"
-        
-        return {
-            'total_checkins': len(checkins_in_range),
-            'weeks_with_checkins': weeks_with_checkins,
-            'total_weeks': total_weeks,
-            'checkin_frequency': f"{frequency_per_week:.1f}/tuần",
-            'status': status
-        }
 
     def update_okr_movement(self):
         """Update OKR movement for each user - ALWAYS use monthly calculation"""
@@ -2031,7 +1927,7 @@ def create_user_manager_with_monthly_calculation(analyzer):
         
         krs_df = _extract_krs_data_for_user_manager(analyzer)
         checkin_df = _extract_checkin_data_for_user_manager(analyzer)
-
+        
         # Truyền monthly_okr_data để set đúng dịch chuyển OKR
         monthly_users_set = set(monthly_user_names)
         return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, monthly_users_set, monthly_okr_data)
@@ -2259,7 +2155,7 @@ def show_user_score_analysis(analyzer):
         user_manager.calculate_scores()
         
         users = user_manager.get_users()
-        scores_df = _create_user_scores_dataframe(users, analyzer)
+        scores_df = _create_user_scores_dataframe(users)
         
         if not scores_df.empty:
             # Analysis coverage information
@@ -2298,26 +2194,14 @@ def show_user_score_analysis(analyzer):
         st.error(f"Error in user score analysis: {e}")
         return pd.DataFrame()
 
-def _create_user_scores_dataframe(users: List[User], analyzer=None) -> pd.DataFrame:
-    """Create dataframe from users for score analysis with detailed check-in stats"""
+def _create_user_scores_dataframe(users: List[User]) -> pd.DataFrame:
+    """Create dataframe from users for score analysis"""
     user_data = []
     for user in users:
-        # Lấy thống kê check-in chi tiết nếu có analyzer
-        checkin_info = 'Yes' if user.checkin == 1 else 'No'
-        checkin_details = ''
-        
-        if analyzer:
-            try:
-                stats = analyzer.get_user_checkin_stats(user.user_id)
-                checkin_details = f"{stats['status']} ({stats['checkin_frequency']})"
-                checkin_info = f"{'Yes' if user.checkin == 1 else 'No'} - {checkin_details}"
-            except:
-                checkin_info = 'Yes' if user.checkin == 1 else 'No'
-        
         user_data.append({
             'Name': user.name,
             'Has OKR': 'Yes' if user.co_OKR == 1 else 'No',
-            'Check-in': checkin_info,
+            'Check-in': 'Yes' if user.checkin == 1 else 'No',
             'OKR Movement (Monthly)': user.dich_chuyen_OKR,  # Lấy từ dịch chuyển tháng
             'Score': user.score
         })
