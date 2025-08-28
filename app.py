@@ -17,9 +17,9 @@ from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
+
 from email.mime.image import MIMEImage
-from email import encoders
+
 import base64
 from io import BytesIO
 import plotly.io as pio
@@ -1385,8 +1385,7 @@ class EmailReportGenerator:
             return False, f"Lỗi gửi email: {str(e)}"
 
     def send_email_report_bulk(self, email_from: str, password: str, recipient_list: List[str], 
-                              subject: str, html_content: str, attach_excel: bool = False, 
-                              excel_buffer: Optional[BytesIO] = None, excel_filename: str = "okr_report.xlsx") -> Tuple[bool, str, List[str]]:
+                              subject: str, html_content: str) -> Tuple[bool, str, List[str]]:
         """Send email report to multiple recipients with optional Excel attachment"""
         success_count = 0
         failed_count = 0
@@ -1400,11 +1399,6 @@ class EmailReportGenerator:
                 for email_to in recipient_list:
                     try:
                         message = self._create_email_message(email_from, email_to, subject, html_content)
-                        
-                        # Đính kèm Excel cho TẤT CẢ recipients nếu attach_excel = True
-                        if attach_excel and excel_buffer:
-                            self._attach_excel_to_message(message, excel_buffer, excel_filename)
-                        
                         server.send_message(message)
                         success_count += 1
                         
@@ -1431,13 +1425,7 @@ class EmailReportGenerator:
         
         return message
 
-    def _attach_excel_to_message(self, message: MIMEMultipart, excel_buffer: BytesIO, excel_filename: str):
-        """Attach Excel file to email message"""
-        excel_part = MIMEBase('application', 'octet-stream')
-        excel_part.set_payload(excel_buffer.getvalue())
-        encoders.encode_base64(excel_part)
-        excel_part.add_header('Content-Disposition', f'attachment; filename= {excel_filename}')
-        message.attach(excel_part)
+
 
 
 class OKRAnalysisSystem:
@@ -2150,7 +2138,7 @@ def get_default_recipients() -> List[str]:
 
 def show_user_score_analysis(analyzer):
     """Show user score analysis using integrated monthly calculation"""
-    st.subheader("🏆 User Score Analysis - Using Data from 'Tất cả nhân viên tiến bộ (tháng)'")
+    st.subheader("🏆 Điểm số người dùng")
     
     try:
         # Kiểm tra có dữ liệu Monthly OKR Analysis
@@ -2226,7 +2214,7 @@ def _display_score_distribution(scores_df: pd.DataFrame):
 def _display_score_tables(scores_df: pd.DataFrame):
     """Display score tables"""
     # All performers sorted by score
-    st.subheader("📊 Tất cả nhân viên (exact data from 'Tất cả nhân viên tiến bộ (tháng)' + calculated has_okr/score/checkin)")
+    st.subheader("📊 Tất cả nhân viên")
     all_performers = scores_df.sort_values('Score', ascending=False)
     st.dataframe(all_performers, use_container_width=True, hide_index=True)
 
@@ -2264,7 +2252,7 @@ def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
 
 def show_data_summary(df: pd.DataFrame, analyzer):
     """Show data summary statistics"""
-    st.subheader("📈 Data Summary")
+    st.subheader("📈 Tổng kết")
     
     col1, col2, col3, col4, col5 = st.columns(5)
     
@@ -2306,7 +2294,7 @@ def _display_missing_summary_metrics(analyzer, members_without_goals: List, memb
 
 def _display_missing_visualizations(analyzer, members_without_goals: List, members_without_checkins: List, members_with_goals_no_checkins: List):
     """Display visualizations for missing analysis"""
-    st.subheader("📊 Missing Analysis Visualization")
+    st.subheader("📊 Dữ liệu thiếu")
     
     col1, col2 = st.columns(2)
     
@@ -2336,7 +2324,7 @@ def _display_goals_pie_chart_and_table(analyzer, members_without_goals: List):
     st.plotly_chart(fig_goals, use_container_width=True)
     
     # Members Without Goals table
-    st.subheader("🚫 Members Without Goals")
+    st.subheader("🚫 Thiếu mục tiêu")
     if members_without_goals:
         no_goals_df = pd.DataFrame(members_without_goals)
         st.dataframe(no_goals_df[['name', 'username', 'job', 'email']], use_container_width=True, height=300)
@@ -2355,7 +2343,7 @@ def _display_goals_pie_chart_and_table(analyzer, members_without_goals: List):
 def _display_checkins_pie_chart_and_table(members_with_goals_no_checkins: List):
     """Display checkins analysis"""
     if members_with_goals_no_checkins:
-        st.subheader("⚠️ Members with Goals but No Checkins")
+        st.subheader("⚠️ Thiếu checkin")
         st.warning("These members have set up goals but haven't made any checkins yet. They may need guidance or reminders.")
         
         goals_no_checkins_df = pd.DataFrame(members_with_goals_no_checkins)
@@ -2506,12 +2494,12 @@ def show_checkin_analysis(period_checkins: List[Dict], overall_checkins: List[Di
     overall_df = pd.DataFrame(overall_checkins)
     
     # Period analysis
-    st.subheader(f"📅 Period Analysis ({quarter_start.strftime('%d/%m/%Y')} - {last_friday.strftime('%d/%m/%Y')})")
+    st.subheader(f"📅 Phân tích kỳ ({quarter_start.strftime('%d/%m/%Y')} - {last_friday.strftime('%d/%m/%Y')})")
     _display_period_checkin_metrics(period_checkins)
     _display_checkin_distribution_chart(period_checkins)
     
     # Overall analysis
-    st.subheader("🏆 Most Active (Overall)")
+    st.subheader("🏆 Hoạt động tích cực nhất")
     _display_overall_checkin_analysis(overall_checkins, quarter_start)
 
 def _display_period_checkin_metrics(period_checkins: List[Dict]):
@@ -2637,7 +2625,7 @@ def show_export_options(df: pd.DataFrame, okr_shifts: List, okr_shifts_monthly: 
 
 def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
     """Run the main analysis"""
-    st.header(f"📊 Analysis Results for {selected_cycle['name']}")
+    st.header(f"📊 Kết quả - {selected_cycle['name']}")
     
     # Progress tracking
     progress_bar = st.progress(0)
@@ -2662,12 +2650,12 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
         show_data_summary(df, analyzer)
         
         if show_missing_analysis:
-            st.subheader("🚨 Missing Goals & Checkins Analysis")
+            st.subheader("🚨 Thiếu dữ liệu")
             with st.spinner("Analyzing missing goals and checkins..."):
                 show_missing_analysis_section(analyzer)
         
         # Weekly OKR Analysis
-        st.subheader("🎯 Weekly OKR Shift Analysis")
+        st.subheader("🎯 OKR tuần")
         with st.spinner("Calculating weekly OKR shifts..."):
             okr_shifts = analyzer.calculate_okr_shifts_by_user()
         
@@ -2679,7 +2667,7 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
         # Monthly OKR Analysis
         okr_shifts_monthly = []
         if DateUtils.should_calculate_monthly_shift():
-            st.subheader("🗓️ Monthly OKR Shift Analysis")
+            st.subheader("🗓️ OKR tháng")
             with st.spinner("Calculating monthly OKR shifts..."):
                 okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly()
             
@@ -2706,12 +2694,12 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
 
         
         # User Score Analysis (sau khi đã có Monthly OKR Analysis data)
-        st.subheader("🏆 User Score Analysis (Monthly OKR Integration)")
+        st.subheader("🏆 Điểm số")
         with st.spinner("Calculating user scores with monthly OKR movement..."):
             show_user_score_analysis(analyzer)
         
         # Checkin Analysis
-        st.subheader("📝 Checkin Behavior Analysis")
+        st.subheader("📝 Phân tích checkin")
         with st.spinner("Analyzing checkin behavior..."):
             period_checkins, overall_checkins = analyzer.analyze_checkin_behavior()
         
@@ -2721,7 +2709,7 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
             st.warning("No checkin data available")
         
         # Export options
-        st.subheader("💾 Export Data")
+        st.subheader("💾 Xuất dữ liệu")
         show_export_options(df, okr_shifts, okr_shifts_monthly, period_checkins, overall_checkins, analyzer)
         
         st.success("✅ Analysis completed successfully!")
@@ -2735,7 +2723,7 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
 def send_email_report(analyzer, email_generator: EmailReportGenerator, selected_cycle: Dict, 
                      email_from: str, email_password: str, email_to: str):
     """Send single email report including monthly data when applicable"""
-    st.header("📧 Sending Email Report")
+    st.header("📧 Báo cáo email")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -2787,7 +2775,7 @@ def send_email_report(analyzer, email_generator: EmailReportGenerator, selected_
             st.success(f"📧 Email report sent to: {email_to}{monthly_note}")
             
             if st.checkbox("📋 Show email preview", value=False):
-                st.subheader("Email Preview")
+                st.subheader("Xem trước email")
                 st.components.v1.html(html_content, height=600, scrolling=True)
         else:
             st.error(f"❌ {message}")
@@ -2802,7 +2790,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
                               email_from: str, email_password: str, recipient_option: str, 
                               selected_okr_emails: Optional[List[str]] = None):
     """Enhanced email sending with bulk capability and Excel attachment"""
-    st.header("📧 Sending Enhanced Email Report")
+    st.header("📧 Email nâng cao")
     
     # Determine recipients
     recipients = _get_email_recipients(analyzer, recipient_option, selected_okr_emails)
@@ -2831,7 +2819,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if DateUtils.should_calculate_monthly_shift() else []
         
-        # Lưu danh sách users từ Monthly OKR Analysis cho Excel consistency
+        # Save users from Monthly OKR Analysis for reference
         if okr_shifts_monthly:
             # Lưu TOÀN BỘ dữ liệu Monthly OKR Analysis cho email export
             monthly_okr_data = []
@@ -2847,11 +2835,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
             st.session_state['monthly_okr_count'] = len(monthly_okr_users)
 
         
-        # Create Excel for recipients
-        status_text.text("Creating Excel report...")
-        progress_bar.progress(0.6)
-        
-        excel_buffer = _create_excel_report(analyzer)
+        # Skip Excel creation for emails
         
         # Create email content
         status_text.text("Creating email content...")
@@ -2868,13 +2852,8 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
-        # Đính kèm Excel cho OKR users hoặc special recipients
-        attach_excel = recipient_option in ["okr_users", "select_okr_users", "special", "all_with_goals"]
-        
         success, message, errors = email_generator.send_email_report_bulk(
-            email_from, email_password, recipients, subject, html_content,
-            attach_excel=attach_excel, excel_buffer=excel_buffer,
-            excel_filename=f"okr_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            email_from, email_password, recipients, subject, html_content
         )
         
         # Display results
@@ -2882,8 +2861,6 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         if success:
             st.success(f"✅ {message}")
             st.success(f"📧 Sent to {len(recipients)} recipients")
-            if attach_excel:
-                st.success("📎 Excel report attached")
             
             if errors:
                 st.warning("⚠️ Some emails failed:")
@@ -2933,44 +2910,15 @@ def _get_email_recipients(analyzer, recipient_option: str, selected_okr_emails: 
     
     return recipients
 
-def _create_excel_report(analyzer) -> BytesIO:
-    """Create Excel report for email attachment"""
-    user_manager = create_user_manager_with_monthly_calculation(analyzer)
-    user_manager.update_checkins()
-    user_manager.update_okr_movement()
-    user_manager.calculate_scores()
-    users = user_manager.get_users()
-    
-    # Excel coverage information
-    excel_user_count = len(users)
-    users_with_okr_in_excel = len([u for u in users if u.co_OKR == 1])
-    users_without_okr_in_excel = len([u for u in users if u.co_OKR == 0])
-    
-    st.success(f"✅ Excel export ready: {excel_user_count} total users ({users_with_okr_in_excel} with Monthly OKR Movement + {users_without_okr_in_excel} without OKR)")
-    
-    # Validation với Monthly OKR Analysis
-    if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
-        monthly_okr_count = st.session_state['monthly_okr_count']
-        if excel_user_count == monthly_okr_count:
-            st.success(f"✅ EXCEL PERFECT MATCH: Using EXACT {excel_user_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
-            st.info("📊 Excel OKR Movement = exact monthly shifts from Monthly OKR Analysis")
-        else:
-            st.error(f"❌ EXCEL COUNT MISMATCH: Excel has {excel_user_count} users, but Monthly OKR Analysis has {monthly_okr_count} users")
-    
-    wb = export_to_excel(users)
-    excel_buffer = BytesIO()
-    wb.save(excel_buffer)
-    excel_buffer.seek(0)
-    
-    return excel_buffer
+
 
 def setup_sidebar_configuration():
     """Setup sidebar configuration"""
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.header("⚙️ Cài đặt")
         
         # Token status
-        st.subheader("🔑 API Token Status")
+        st.subheader("🔑 Trạng thái API")
         goal_token = os.getenv("GOAL_ACCESS_TOKEN")
         account_token = os.getenv("ACCOUNT_ACCESS_TOKEN")
         
@@ -3033,7 +2981,7 @@ def get_emails_of_okr_users(analyzer) -> List[str]:
 def setup_cycle_selection(analyzer) -> Dict:
     """Setup cycle selection in sidebar"""
     with st.sidebar:
-        st.subheader("📅 Cycle Selection")
+        st.subheader("📅 Chu kỳ")
         
         with st.spinner("🔄 Loading available cycles..."):
             cycles = analyzer.get_cycle_list()
@@ -3157,7 +3105,7 @@ def get_emails_of_total_users_with_okr(analyzer) -> List[str]:
 def setup_analysis_options():
     """Setup analysis options in sidebar"""
     with st.sidebar:
-        st.subheader("📊 Analysis Options")
+        st.subheader("📊 Tùy chọn")
         return st.checkbox("Show Missing Goals & Checkins Analysis", value=True)
 
 
@@ -3165,7 +3113,7 @@ def setup_analysis_options():
 def setup_enhanced_email_configuration(analyzer):
     """Setup enhanced email configuration in sidebar"""
     with st.sidebar:
-        st.subheader("📧 Enhanced Email Settings")
+        st.subheader("📧 Cấu hình email")
         
         # Recipient options - mặc định chọn all_with_goals
         recipient_option = st.radio(
@@ -3229,7 +3177,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
 
 def main():
     """Main application entry point"""
-    st.title("🎯 OKR & Checkin Analysis Dashboard")
+    st.title("🎯 Phân tích OKR")
     st.markdown("---")
 
     # Setup configuration
@@ -3276,9 +3224,9 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         analyze_button = st.button("🔄 Re-run Analysis", type="primary", use_container_width=True)
     
     with col2:
-        # Thay đổi tên nút để phản ánh việc gửi Excel
+        # Email report button text
         if recipient_option == "okr_users":
-            button_text = "📧 Send Email Report + Excel to OKR Users"
+            button_text = "📧 Send Email Report to OKR Users"
         else:
             button_text = "📧 Send Enhanced Email Report"
         email_button = st.button(button_text, type="secondary", use_container_width=True)
