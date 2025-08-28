@@ -2726,11 +2726,6 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
             with st.spinner("Analyzing missing goals and checkins..."):
                 show_missing_analysis_section(analyzer)
         
-        # User Score Analysis
-        st.subheader("🏆 User Score Analysis (Monthly OKR Integration)")
-        with st.spinner("Calculating user scores with monthly OKR movement..."):
-            show_user_score_analysis(analyzer)
-        
         # Weekly OKR Analysis
         st.subheader("🎯 Weekly OKR Shift Analysis")
         with st.spinner("Calculating weekly OKR shifts..."):
@@ -2769,6 +2764,11 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
             current_month = datetime.now().month
             quarter_months = {1: "Q1", 4: "Q2", 7: "Q3", 10: "Q4"}
             st.info(f"ℹ️ Monthly OKR shift analysis is not calculated for month {current_month} (start of {quarter_months.get(current_month, 'quarter')})")
+        
+        # User Score Analysis (sau khi đã có Monthly OKR Analysis data)
+        st.subheader("🏆 User Score Analysis (Monthly OKR Integration)")
+        with st.spinner("Calculating user scores with monthly OKR movement..."):
+            show_user_score_analysis(analyzer)
         
         # Checkin Analysis
         st.subheader("📝 Checkin Behavior Analysis")
