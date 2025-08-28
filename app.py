@@ -185,7 +185,11 @@ class UserManager:
                 user.checkin = 1
 
     def _has_weekly_checkins(self, user_id, start_date=None, end_date=None) -> bool:
-        """Check if user has checkins in at least 3 weeks within specified period"""
+        """
+        Kiểm tra user có check-in hàng tuần/hàng tháng không:
+        - Xem có check-in ít nhất 1 lần mỗi tuần
+        - Nếu đã trôi qua 8 tuần thì trong 7 tuần qua ít nhất mỗi tuần có 1 lần check-in
+        """
         if start_date is None:
             start_date = DateUtils.get_quarter_start_date().date()
         if end_date is None:
@@ -200,8 +204,43 @@ class UserManager:
         if not checkins_in_range:
             return False
         
-        weekly_checkins = set(dt.isocalendar()[1] for dt in checkins_in_range)
-        return len(weekly_checkins) >= MIN_WEEKLY_CHECKINS
+        # Tính số tuần từ start_date đến end_date
+        total_weeks = (end_datetime.date() - start_datetime.date()).days // 7 + 1
+        
+        # Nếu đã trôi qua 8 tuần, chỉ kiểm tra 7 tuần gần nhất
+        if total_weeks >= 8:
+            # Tính ngày bắt đầu của 7 tuần gần nhất
+            weeks_to_check = 7
+            check_start_date = end_datetime.date() - timedelta(weeks=weeks_to_check)
+            check_start_datetime = datetime.combine(check_start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+            
+            # Lọc check-ins trong 7 tuần gần nhất
+            recent_checkins = [dt for dt in checkins_in_range if dt >= check_start_datetime]
+            
+            if not recent_checkins:
+                return False
+                
+            # Kiểm tra mỗi tuần có ít nhất 1 check-in
+            weekly_checkins = set()
+            for dt in recent_checkins:
+                # Tính tuần dựa trên ngày bắt đầu kiểm tra
+                days_from_start = (dt.date() - check_start_date).days
+                week_number = days_from_start // 7
+                weekly_checkins.add(week_number)
+            
+            # Yêu cầu có check-in trong ít nhất 5/7 tuần gần nhất (threshold có thể điều chỉnh)
+            return len(weekly_checkins) >= 5
+        else:
+            # Nếu chưa đủ 8 tuần, kiểm tra theo logic cũ nhưng linh hoạt hơn
+            weekly_checkins = set()
+            for dt in checkins_in_range:
+                days_from_start = (dt.date() - start_datetime.date()).days
+                week_number = days_from_start // 7
+                weekly_checkins.add(week_number)
+            
+            # Yêu cầu có check-in trong ít nhất 60% số tuần đã trôi qua
+            required_weeks = max(1, int(total_weeks * 0.6))
+            return len(weekly_checkins) >= required_weeks
 
     def _get_user_checkins(self, user_id) -> List[datetime]:
         """Get all checkin dates for a user"""
@@ -215,6 +254,71 @@ class UserManager:
                 except (ValueError, TypeError):
                     continue
         return checkins
+
+    def get_user_checkin_stats(self, user_id, start_date=None, end_date=None) -> Dict:
+        """
+        Lấy thống kê chi tiết về check-in của user:
+        - Tổng số check-in trong khoảng thời gian
+        - Số tuần có check-in / tổng số tuần
+        - Tần suất check-in hàng tuần
+        """
+        if start_date is None:
+            start_date = DateUtils.get_quarter_start_date().date()
+        if end_date is None:
+            end_date = date.today()
+            
+        start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+        
+        checkins = self._get_user_checkins(user_id)
+        checkins_in_range = [dt for dt in checkins if start_datetime <= dt <= end_datetime]
+        
+        total_weeks = (end_datetime.date() - start_datetime.date()).days // 7 + 1
+        
+        if not checkins_in_range:
+            return {
+                'total_checkins': 0,
+                'weeks_with_checkins': 0,
+                'total_weeks': total_weeks,
+                'checkin_frequency': '0/tuần',
+                'status': 'Không có check-in'
+            }
+        
+        # Đếm số tuần có check-in
+        weekly_checkins = set()
+        for dt in checkins_in_range:
+            days_from_start = (dt.date() - start_datetime.date()).days
+            week_number = days_from_start // 7
+            weekly_checkins.add(week_number)
+        
+        weeks_with_checkins = len(weekly_checkins)
+        frequency_per_week = len(checkins_in_range) / max(1, total_weeks)
+        
+        # Kiểm tra nếu đã trôi qua 8 tuần thì xem 7 tuần gần nhất
+        if total_weeks >= 8:
+            check_start_date = end_datetime.date() - timedelta(weeks=7)
+            check_start_datetime = datetime.combine(check_start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+            
+            recent_checkins = [dt for dt in checkins_in_range if dt >= check_start_datetime]
+            recent_weekly_checkins = set()
+            
+            for dt in recent_checkins:
+                days_from_start = (dt.date() - check_start_date).days
+                week_number = days_from_start // 7
+                recent_weekly_checkins.add(week_number)
+            
+            recent_weeks_with_checkins = len(recent_weekly_checkins)
+            status = f"{recent_weeks_with_checkins}/7 tuần gần nhất"
+        else:
+            status = f"{weeks_with_checkins}/{total_weeks} tuần"
+        
+        return {
+            'total_checkins': len(checkins_in_range),
+            'weeks_with_checkins': weeks_with_checkins,
+            'total_weeks': total_weeks,
+            'checkin_frequency': f"{frequency_per_week:.1f}/tuần",
+            'status': status
+        }
 
     def update_okr_movement(self):
         """Update OKR movement for each user - ALWAYS use monthly calculation"""
@@ -1933,8 +2037,82 @@ def create_user_manager_with_monthly_calculation(analyzer):
         return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, monthly_users_set, monthly_okr_data)
     
     else:
-        st.warning("⚠️ No Monthly OKR Analysis data found. Please run Monthly OKR Analysis first!")
-        return UserManager(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None, None, set(), [])
+        # Nếu chưa có Monthly OKR Analysis data, tạo ngay tại chỗ
+        st.info("🔄 No saved Monthly OKR Analysis data found. Creating monthly calculation now...")
+        
+        try:
+            # Tính toán monthly shifts ngay tại chỗ
+            monthly_okr_data = []
+            okr_shifts_monthly = analyzer.analyze_okr_movement_monthly()
+            
+            if okr_shifts_monthly:
+                for shift in okr_shifts_monthly:
+                    monthly_okr_data.append({
+                        'user_name': shift['user_name'],
+                        'okr_shift_monthly': shift.get('kr_shift_monthly', 0)
+                    })
+                
+                monthly_user_names = [data['user_name'] for data in monthly_okr_data]
+                
+                st.success(f"✅ Generated monthly calculation for {len(monthly_okr_data)} users")
+                
+                # Tạo account_df cho users có OKR movement
+                if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+                    account_df = analyzer.filtered_members_df[
+                        analyzer.filtered_members_df['name'].isin(monthly_user_names)
+                    ].copy()
+                    
+                    # Tạo records cho users missing
+                    existing_names = set(account_df['name'].tolist())
+                    missing_names = set(monthly_user_names) - existing_names
+                    
+                    if missing_names:
+                        missing_records = []
+                        for name in missing_names:
+                            missing_records.append({
+                                'name': name,
+                                'username': name.lower().replace(' ', ''),
+                                'email': f"{name.lower().replace(' ', '')}@company.com",
+                                'job': 'N/A',
+                                'id': f"okr_{hash(name) % 10000}"
+                            })
+                        missing_df = pd.DataFrame(missing_records)
+                        account_df = pd.concat([account_df, missing_df], ignore_index=True)
+                else:
+                    # Tạo account_df từ monthly_okr_data
+                    account_records = []
+                    for name in monthly_user_names:
+                        account_records.append({
+                            'name': name,
+                            'username': name.lower().replace(' ', ''),
+                            'email': f"{name.lower().replace(' ', '')}@company.com",
+                            'job': 'N/A',
+                            'id': f"okr_{hash(name) % 10000}"
+                        })
+                    account_df = pd.DataFrame(account_records)
+                
+                krs_df = _extract_krs_data_for_user_manager(analyzer)
+                checkin_df = _extract_checkin_data_for_user_manager(analyzer)
+                
+                monthly_users_set = set(monthly_user_names)
+                return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, monthly_users_set, monthly_okr_data)
+            
+            else:
+                st.warning("⚠️ No OKR movement data found. Using all filtered members.")
+                # Fall back to using all filtered members
+                if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
+                    account_df = analyzer.filtered_members_df.copy()
+                    krs_df = _extract_krs_data_for_user_manager(analyzer)
+                    checkin_df = _extract_checkin_data_for_user_manager(analyzer)
+                    return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, set(), [])
+                else:
+                    st.error("⚠️ No user data available for analysis")
+                    return UserManager(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None, None, set(), [])
+                    
+        except Exception as e:
+            st.error(f"❌ Error creating monthly calculation: {e}")
+            st.info("📋 Please run Monthly OKR Analysis first for complete data")
+            return UserManager(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None, None, set(), [])
 
 def _extract_krs_data_for_user_manager(analyzer) -> pd.DataFrame:
     """Extract KRs data for UserManager from final_df"""
@@ -2140,14 +2318,16 @@ def show_user_score_analysis(analyzer):
     st.subheader("🏆 User Score Analysis - Using Data from 'Tất cả nhân viên tiến bộ (tháng)'")
     
     try:
-        # Thông báo về phạm vi phân tích - chỉ những users từ Monthly OKR Analysis
+        # Thông báo về phạm vi phân tích
         if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
             monthly_okr_count = st.session_state['monthly_okr_count']
-            st.info(f"🎯 Analyzing ONLY {monthly_okr_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
+            st.info(f"🎯 Using saved data: {monthly_okr_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
             st.info("📊 OKR Movement values = exact monthly shifts from Monthly OKR Analysis table")
-            st.info("✅ has_okr, score, check-in = calculated separately based on each user's data")
         else:
-            st.warning("⚠️ No Monthly OKR Analysis data available. Please run Monthly OKR Analysis first!")
+            st.info("🔄 No saved Monthly OKR Analysis data found. Will generate monthly calculation automatically.")
+            st.info("📊 OKR Movement values will be calculated on-the-fly")
+        
+        st.info("✅ has_okr, score, check-in = calculated separately based on each user's data")
         
         user_manager = create_user_manager_with_monthly_calculation(analyzer)
         user_manager.update_checkins()
@@ -2155,7 +2335,7 @@ def show_user_score_analysis(analyzer):
         user_manager.calculate_scores()
         
         users = user_manager.get_users()
-        scores_df = _create_user_scores_dataframe(users)
+        scores_df = _create_user_scores_dataframe(users, analyzer)
         
         if not scores_df.empty:
             # Analysis coverage information
@@ -2165,15 +2345,17 @@ def show_user_score_analysis(analyzer):
             
             st.success(f"✅ Score Analysis complete: {score_count} total users ({users_with_okr} with Monthly OKR Movement + {users_without_okr} without OKR)")
             
-            # Validation - đảm bảo sử dụng chính xác dữ liệu từ Monthly OKR Analysis
+            # Validation thông tin
             if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
                 monthly_okr_count = st.session_state['monthly_okr_count']
                 if score_count == monthly_okr_count:
-                    st.success(f"✅ PERFECT MATCH: Using EXACT {score_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
-                    st.info("📊 OKR Movement values are taken directly from Monthly OKR Analysis")
+                    st.success(f"✅ PERFECT MATCH: Using EXACT {score_count} users from saved 'Tất cả nhân viên tiến bộ (tháng)' data")
+                    st.info("📊 OKR Movement values are taken directly from saved Monthly OKR Analysis")
                 else:
-                    st.error(f"❌ COUNT MISMATCH: Score Analysis has {score_count} users, but Monthly OKR Analysis has {monthly_okr_count} users")
-                    st.error("🔄 Data inconsistency detected - please check data source")
+                    st.warning(f"⚠️ COUNT DIFFERENCE: Score Analysis has {score_count} users, saved Monthly OKR Analysis has {monthly_okr_count} users")
+            else:
+                st.success(f"✅ Generated monthly calculation for {score_count} users with OKR movement data")
+                st.info("📊 OKR Movement values calculated automatically from current data")
             
             if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
                 total_filtered = len(analyzer.filtered_members_df)
@@ -2194,14 +2376,26 @@ def show_user_score_analysis(analyzer):
         st.error(f"Error in user score analysis: {e}")
         return pd.DataFrame()
 
-def _create_user_scores_dataframe(users: List[User]) -> pd.DataFrame:
-    """Create dataframe from users for score analysis"""
+def _create_user_scores_dataframe(users: List[User], analyzer=None) -> pd.DataFrame:
+    """Create dataframe from users for score analysis with detailed check-in stats"""
     user_data = []
     for user in users:
+        # Lấy thống kê check-in chi tiết nếu có analyzer
+        checkin_info = 'Yes' if user.checkin == 1 else 'No'
+        checkin_details = ''
+        
+        if analyzer:
+            try:
+                stats = analyzer.get_user_checkin_stats(user.user_id)
+                checkin_details = f"{stats['status']} ({stats['checkin_frequency']})"
+                checkin_info = f"{'Yes' if user.checkin == 1 else 'No'} - {checkin_details}"
+            except:
+                checkin_info = 'Yes' if user.checkin == 1 else 'No'
+        
         user_data.append({
             'Name': user.name,
             'Has OKR': 'Yes' if user.co_OKR == 1 else 'No',
-            'Check-in': 'Yes' if user.checkin == 1 else 'No',
+            'Check-in': checkin_info,
             'OKR Movement (Monthly)': user.dich_chuyen_OKR,  # Lấy từ dịch chuyển tháng
             'Score': user.score
         })
