@@ -97,7 +97,7 @@ class User:
         self.user_id = str(user_id)
         self.name = name
         self.co_OKR = co_OKR
-        self.checkin = checkin  # Sẽ lưu tỷ lệ % thay vì 0/1
+        self.checkin = checkin  # 0/1: có check-in ít nhất 3/4 tuần trong tháng hiện tại
         self.dich_chuyen_OKR = dich_chuyen_OKR
         self.score = score
         self.OKR = {month: 0 for month in range(1, 13)}
@@ -111,13 +111,10 @@ class User:
         """Calculate score based on criteria: check-in, OKR and OKR movement"""
         score = 0.5
         
-        # Check-in contributes 0.5 points based on percentage
-        # Tỷ lệ >= 70% được tính đầy đủ 0.5 điểm, < 70% tính theo tỷ lệ
-        checkin_percentage = float(self.checkin)
-        if checkin_percentage >= 70:
+        # Check-in contributes 0.5 points
+        # Có check-in ít nhất 3 tuần trong tháng hiện tại → +0.5 điểm
+        if self.checkin == 1:
             score += 0.5
-        elif checkin_percentage > 0:
-            score += 0.5 * (checkin_percentage / 70)  # Tính theo tỷ lệ
         
         # Having OKR contributes 1 point
         if self.co_OKR == 1:
@@ -183,28 +180,12 @@ class UserManager:
         return users
 
     def update_checkins(self, start_date=None, end_date=None):
-        """Update check-in percentage for each user"""
+        """Update check-in status for each user"""
         for user in self.users.values():
-            user.checkin = self._calculate_weekly_checkin_percentage(user.user_id, start_date, end_date)
-
-    def _has_weekly_checkins(self, user_id, start_date=None, end_date=None) -> bool:
-        """Check if user has checkins in at least 3 weeks within specified period"""
-        if start_date is None:
-            start_date = DateUtils.get_quarter_start_date().date()
-        if end_date is None:
-            end_date = date.today()
-            
-        start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-        end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
-        
-        checkins = self._get_user_checkins(user_id)
-        checkins_in_range = [dt for dt in checkins if start_datetime <= dt <= end_datetime]
-        
-        if not checkins_in_range:
-            return False
-        
-        weekly_checkins = set(dt.isocalendar()[1] for dt in checkins_in_range)
-        return len(weekly_checkins) >= MIN_WEEKLY_CHECKINS
+            if self._meets_monthly_weekly_criteria(user.user_id):
+                user.checkin = 1
+            else:
+                user.checkin = 0
 
     def _get_user_checkins(self, user_id) -> List[datetime]:
         """Get all checkin dates for a user"""
@@ -219,36 +200,34 @@ class UserManager:
                     continue
         return checkins
 
-    def _calculate_weekly_checkin_percentage(self, user_id, start_date=None, end_date=None) -> float:
-        """Calculate weekly check-in percentage for a user"""
-        if start_date is None:
-            start_date = DateUtils.get_quarter_start_date().date()
-        if end_date is None:
-            end_date = date.today()
-            
-        start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-        end_datetime = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+    def _meets_monthly_weekly_criteria(self, user_id) -> bool:
+        """Check if user has checkins in at least 3 weeks of current month"""
+        # Tính ngày đầu và cuối tháng hiện tại
+        today = datetime.now()
+        current_month = today.month
+        current_year = today.year
         
-        # Tính tổng số tuần đã trôi qua
-        total_days = (end_datetime - start_datetime).days
-        total_weeks = max(total_days // 7, 1)  # Ít nhất 1 tuần
+        month_start = datetime(current_year, current_month, 1).replace(tzinfo=timezone.utc)
+        if current_month == 12:
+            month_end = datetime(current_year + 1, 1, 1).replace(tzinfo=timezone.utc) - timedelta(seconds=1)
+        else:
+            month_end = datetime(current_year, current_month + 1, 1).replace(tzinfo=timezone.utc) - timedelta(seconds=1)
         
-        # Lấy tất cả check-in của user trong khoảng thời gian
+        # Lấy tất cả check-in của user trong tháng hiện tại
         checkins = self._get_user_checkins(user_id)
-        checkins_in_range = [dt for dt in checkins if start_datetime <= dt <= end_datetime]
+        checkins_this_month = [dt for dt in checkins if month_start <= dt <= month_end]
         
-        if not checkins_in_range:
-            return 0.0
+        if not checkins_this_month:
+            return False
         
-        # Đếm số tuần có check-in (sử dụng week number của năm)
+        # Đếm số tuần có check-in trong tháng hiện tại
         weeks_with_checkins = set()
-        for checkin_date in checkins_in_range:
+        for checkin_date in checkins_this_month:
             year, week, _ = checkin_date.isocalendar()
             weeks_with_checkins.add((year, week))
         
-        # Tính tỷ lệ phần trăm
-        checkin_percentage = (len(weeks_with_checkins) / total_weeks) * 100
-        return round(min(checkin_percentage, 100.0), 1)  # Giới hạn tối đa 100%
+        # Cần ít nhất 3 tuần có check-in trong tháng hiện tại
+        return len(weeks_with_checkins) >= 3
 
     def update_okr_movement(self):
         """Update OKR movement for each user - ALWAYS use monthly calculation"""
@@ -2110,15 +2089,7 @@ def _fill_excel_user_data(ws, users: List[User], styles: Dict):
         
         # Basic scores
         ws.cell(row=3, column=col_idx, value=1 if user.co_OKR == 1 else 0)
-        # Calculate checkin score based on percentage
-        checkin_percentage = float(user.checkin)
-        if checkin_percentage >= 70:
-            checkin_score = 0.5
-        elif checkin_percentage > 0:
-            checkin_score = round(0.5 * (checkin_percentage / 70), 2)
-        else:
-            checkin_score = 0
-        ws.cell(row=4, column=col_idx, value=checkin_score)
+        ws.cell(row=4, column=col_idx, value=0.5 if user.checkin == 1 else 0)
         ws.cell(row=5, column=col_idx, value=0.5)
 
         # Movement percentage and score
@@ -2243,7 +2214,7 @@ def _create_user_scores_dataframe(users: List[User]) -> pd.DataFrame:
         user_data.append({
             'Name': user.name,
             'Has OKR': 'Yes' if user.co_OKR == 1 else 'No',
-            'Check-in': f"{user.checkin}%" if user.checkin > 0 else "0%",  # Hiển thị tỷ lệ %
+            'Check-in': 'Yes' if user.checkin == 1 else 'No',  # Yes/No theo tiêu chí 3/4 tuần
             'OKR Movement (Monthly)': user.dich_chuyen_OKR,  # Lấy từ dịch chuyển tháng
             'Score': user.score
         })
