@@ -141,14 +141,12 @@ class User:
 class UserManager:
     """Manages user data and calculations"""
     
-    def __init__(self, account_df, krs_df, checkin_df, cycle_df=None, final_df=None, users_with_okr_names=None, monthly_okr_data=None):
+    def __init__(self, account_df, krs_df, checkin_df, cycle_df=None, final_df=None):
         self.account_df = account_df
         self.krs_df = krs_df
         self.checkin_df = checkin_df
         self.cycle_df = cycle_df
         self.final_df = final_df
-        self.users_with_okr_names = users_with_okr_names or set()  # Danh sách tên users có OKR
-        self.monthly_okr_data = monthly_okr_data or []  # Dữ liệu monthly OKR từ bảng "Tất cả nhân viên tiến bộ (tháng)"
         
         self.user_name_map = self._create_user_name_map()
         self.users = self._create_users()
@@ -162,19 +160,17 @@ class UserManager:
         return user_map
 
     def _create_users(self) -> Dict[str, User]:
-        """Create User objects for ALL account members, with accurate OKR marking"""
+        """Create User objects from KRs data"""
         users = {}
-        
-        # Tạo users cho TẤT CẢ account_df
-        if not self.account_df.empty and 'id' in self.account_df.columns and 'name' in self.account_df.columns:
-            for _, row in self.account_df.iterrows():
-                user_id = str(row.get('id'))
-                name = row.get('name', 'Unknown')
-                
-                # Chỉ đánh dấu co_OKR=1 nếu tên user có trong danh sách users_with_okr_names
-                has_okr = 1 if name in self.users_with_okr_names else 0
-                
-                users[user_id] = User(user_id, name, co_OKR=has_okr)
+        unique_user_ids = set()
+
+        if not self.krs_df.empty and 'user_id' in self.krs_df.columns:
+            for _, kr in self.krs_df.iterrows():
+                user_id = str(kr.get("user_id"))
+                if user_id and user_id not in unique_user_ids and user_id in self.user_name_map:
+                    name = self.user_name_map[user_id]
+                    users[user_id] = User(user_id, name)
+                    unique_user_ids.add(user_id)
 
         return users
 
@@ -217,9 +213,11 @@ class UserManager:
         return checkins
 
     def update_okr_movement(self):
-        """Update OKR movement for each user - ALWAYS use monthly calculation"""
-        # Luôn sử dụng monthly shift theo yêu cầu
-        self._update_okr_movement_monthly()
+        """Update OKR movement for each user"""
+        if not DateUtils.should_calculate_monthly_shift():
+            self._update_okr_movement_quarter_start()
+        else:
+            self._update_okr_movement_monthly()
 
     def _update_okr_movement_quarter_start(self):
         """Update OKR movement for quarter start months (1,4,7,10)"""
@@ -228,23 +226,42 @@ class UserManager:
             user.dich_chuyen_OKR = current_okr
 
     def _update_okr_movement_monthly(self):
-        """Update OKR movement using EXACT values from Monthly OKR Analysis table"""
-        
-        # Tạo mapping từ tên user đến dịch chuyển tháng từ bảng "Tất cả nhân viên tiến bộ (tháng)"
-        monthly_shift_map = {}
-        if self.monthly_okr_data:
-            for data in self.monthly_okr_data:
-                monthly_shift_map[data['user_name']] = data['okr_shift_monthly']
-        
+        """Update OKR movement for non-quarter start months"""
         for user in self.users.values():
-            user_name = user.name
+            user_id = user.user_id
+            current_okr = self._calculate_current_value_for_user(user_id)
+            monthly_shift = self._calculate_final_okr_goal_shift_monthly_for_user(user_id)
             
-            if user_name in monthly_shift_map:
-                # Sử dụng CHÍNH XÁC dịch chuyển tháng từ bảng "Tất cả nhân viên tiến bộ (tháng)"
-                user.dich_chuyen_OKR = round(monthly_shift_map[user_name], 2)
+            if self.final_df is not None:
+                user_name = self.user_name_map.get(user_id, '')
+                user_df = self.final_df[self.final_df['goal_user_name'] == user_name].copy()
+                
+                if not user_df.empty:
+                    last_month_end = DateUtils.get_last_month_end_date()
+                    last_month_value = self._calculate_last_month_value_for_user(user_df, last_month_end)
+                    
+                    # Áp dụng logic mới theo yêu cầu:
+                    # 1. Nếu giá trị cuối tháng trước > giá trị hiện tại thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
+                    # 2. Nếu giá trị cuối tháng trước < giá trị hiện tại và (giá trị hiện tại - giá trị cuối tháng trước) != dịch chuyển
+                    #    thì dịch chuyển tháng = giá trị hiện tại - giá trị cuối tháng trước
+                    
+                    final_shift = monthly_shift
+                    
+                    # Quy tắc 1: Nếu last_month_value > current_okr
+                    if last_month_value > current_okr:
+                        # Điều chỉnh reference value: last_month_value = current_okr - monthly_shift
+                        adjusted_last_month_value = current_okr - monthly_shift
+                        final_shift = monthly_shift  # Giữ nguyên shift
+                    
+                    # Quy tắc 2: Nếu last_month_value < current_okr VÀ (current_okr - last_month_value) != monthly_shift
+                    elif last_month_value < current_okr and (current_okr - last_month_value) != monthly_shift:
+                        final_shift = current_okr - last_month_value
+                    
+                    user.dich_chuyen_OKR = round(final_shift, 2)
+                else:
+                    user.dich_chuyen_OKR = round(monthly_shift, 2)
             else:
-                # Không có trong Monthly OKR Analysis => không có OKR movement
-                user.dich_chuyen_OKR = 0
+                user.dich_chuyen_OKR = round(monthly_shift, 2)
 
     def _calculate_current_value_for_user(self, user_id) -> float:
         """Calculate current OKR value for a specific user"""
@@ -1006,7 +1023,7 @@ class EmailReportGenerator:
         
         return f"""
         <tr style='background: linear-gradient(135deg, #e8f4f8, #f0f8ff); border-top: 2px solid #3498db; font-weight: bold;'>
-            <td colspan="2" style='text-align: center; color: #2c3e50;'>📊 TỔNG KẾT TẤT CẢ {len(data)} NHÂN VIÊN</td>
+            <td colspan="2" style='text-align: center; color: #2c3e50;'>📊 TỔNG KẾT TOP {len(data)}</td>
             <td style='text-align: center; color: #3498db;'>{total_checkins_sum}</td>
             <td style='text-align: center; color: #27AE60;'>{avg_frequency:.2f}</td>
             <td style='text-align: center; color: #e74c3c;'>{active_last_week} người</td>
@@ -1877,64 +1894,62 @@ class OKRAnalysisSystem:
 # ==================== UTILITY FUNCTIONS ====================
 
 def create_user_manager_with_monthly_calculation(analyzer):
-    """Create UserManager using EXACT data from Monthly OKR Analysis"""
+    """Create UserManager integrated with monthly OKR calculation from OKRAnalysisSystem"""
     
-    # Sử dụng CHÍNH XÁC dữ liệu từ Monthly OKR Analysis
-    if 'monthly_okr_data' in st.session_state and st.session_state['monthly_okr_data']:
-        monthly_okr_data = st.session_state['monthly_okr_data']
-        monthly_user_names = [data['user_name'] for data in monthly_okr_data]
+    # Chỉ tạo account_df cho users thực sự có OKR data để đồng nhất với OKR shifts analysis
+    if analyzer.final_df is not None and not analyzer.final_df.empty:
+        # Lấy tất cả unique users có OKR data từ final_df
+        users_with_okr_data = set(analyzer.final_df['goal_user_name'].dropna().unique())
         
-        st.info(f"🔄 Using EXACT {len(monthly_okr_data)} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
-        
-        # Tạo account_df CHỈ cho users có trong Monthly OKR Analysis
+        # Tạo account_df chỉ từ users có OKR data
         if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
-            # Lọc chỉ lấy users có trong monthly_okr_data
+            # Lọc filtered_members_df để chỉ lấy users có OKR data
             account_df = analyzer.filtered_members_df[
-                analyzer.filtered_members_df['name'].isin(monthly_user_names)
+                analyzer.filtered_members_df['name'].isin(users_with_okr_data)
             ].copy()
             
-            # Nếu có users trong monthly_okr_data nhưng không có trong filtered_members_df, tạo record
-            existing_names = set(account_df['name'].tolist())
-            missing_names = set(monthly_user_names) - existing_names
+            # Nếu có users có OKR data nhưng không có trong filtered_members_df, tạo record cơ bản
+            existing_names = set(account_df['name'].dropna().unique()) if not account_df.empty and 'name' in account_df.columns else set()
+            missing_users = users_with_okr_data - existing_names
             
-            if missing_names:
-                st.warning(f"⚠️ Creating records for {len(missing_names)} users not found in filtered_members_df")
+            if missing_users:
                 missing_records = []
-                for name in missing_names:
+                for user_name in missing_users:
+                    # Lấy thông tin từ final_df
+                    user_data = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].iloc[0]
                     missing_records.append({
-                        'name': name,
-                        'username': name.lower().replace(' ', ''),
-                        'email': f"{name.lower().replace(' ', '')}@company.com",
+                        'name': user_name,
+                        'username': user_data.get('goal_user_username', user_name.lower()),
+                        'email': f"{user_data.get('goal_user_username', user_name.lower())}@company.com",
                         'job': 'N/A',
-                        'id': f"okr_{hash(name) % 10000}"
+                        'id': f"okr_{hash(user_name) % 10000}"
                     })
-                missing_df = pd.DataFrame(missing_records)
-                account_df = pd.concat([account_df, missing_df], ignore_index=True)
+                
+                # Thêm missing users vào account_df
+                if missing_records:
+                    missing_df = pd.DataFrame(missing_records)
+                    account_df = pd.concat([account_df, missing_df], ignore_index=True)
         else:
-            # Tạo account_df từ monthly_okr_data nếu không có filtered_members_df
-            account_records = []
-            for name in monthly_user_names:
-                account_records.append({
-                    'name': name,
-                    'username': name.lower().replace(' ', ''),
-                    'email': f"{name.lower().replace(' ', '')}@company.com",
+            # Nếu không có filtered_members_df, tạo từ final_df
+            user_records = []
+            for user_name in users_with_okr_data:
+                user_data = analyzer.final_df[analyzer.final_df['goal_user_name'] == user_name].iloc[0]
+                user_records.append({
+                    'name': user_name,
+                    'username': user_data.get('goal_user_username', user_name.lower()),
+                    'email': f"{user_data.get('goal_user_username', user_name.lower())}@company.com",
                     'job': 'N/A',
-                    'id': f"okr_{hash(name) % 10000}"
+                    'id': f"okr_{hash(user_name) % 10000}"
                 })
-            account_df = pd.DataFrame(account_records)
-        
-        st.success(f"✅ Score Analysis will include ONLY {len(account_df)} users from Monthly OKR Analysis")
+            account_df = pd.DataFrame(user_records)
         
         krs_df = _extract_krs_data_for_user_manager(analyzer)
         checkin_df = _extract_checkin_data_for_user_manager(analyzer)
-        
-        # Truyền monthly_okr_data để set đúng dịch chuyển OKR
-        monthly_users_set = set(monthly_user_names)
-        return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, monthly_users_set, monthly_okr_data)
-    
     else:
-        st.warning("⚠️ No Monthly OKR Analysis data found. Please run Monthly OKR Analysis first!")
-        return UserManager(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None, None, set(), [])
+        account_df = analyzer.filtered_members_df if analyzer.filtered_members_df is not None else pd.DataFrame()
+        krs_df, checkin_df = pd.DataFrame(), pd.DataFrame()
+
+    return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df)
 
 def _extract_krs_data_for_user_manager(analyzer) -> pd.DataFrame:
     """Extract KRs data for UserManager from final_df"""
@@ -2130,24 +2145,20 @@ def get_email_list(analyzer) -> List[str]:
 
 def get_default_recipients() -> List[str]:
     """Get default special recipients"""
-    return ["tts122403@gmail.com"]
+    return ["xnk3@apluscorp.vn"]
 
 
 # ==================== STREAMLIT UI FUNCTIONS ====================
 
 def show_user_score_analysis(analyzer):
     """Show user score analysis using integrated monthly calculation"""
-    st.subheader("🏆 User Score Analysis - Using Data from 'Tất cả nhân viên tiến bộ (tháng)'")
+    st.subheader("🏆 User Score Analysis (Integrated Monthly Calculation)")
     
     try:
-        # Thông báo về phạm vi phân tích - chỉ những users từ Monthly OKR Analysis
-        if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
-            monthly_okr_count = st.session_state['monthly_okr_count']
-            st.info(f"🎯 Analyzing ONLY {monthly_okr_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
-            st.info("📊 OKR Movement values = exact monthly shifts from Monthly OKR Analysis table")
-            st.info("✅ has_okr, score, check-in = calculated separately based on each user's data")
-        else:
-            st.warning("⚠️ No Monthly OKR Analysis data available. Please run Monthly OKR Analysis first!")
+        # Đảm bảo đồng nhất với OKR shifts analysis
+        if analyzer.final_df is not None and not analyzer.final_df.empty:
+            total_okr_users = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
+            st.info(f"📊 Analyzing {total_okr_users} users with OKR data (same as OKR shifts analysis)")
         
         user_manager = create_user_manager_with_monthly_calculation(analyzer)
         user_manager.update_checkins()
@@ -2158,28 +2169,14 @@ def show_user_score_analysis(analyzer):
         scores_df = _create_user_scores_dataframe(users)
         
         if not scores_df.empty:
-            # Analysis coverage information
+            # Validation - số lượng phải khớp với OKR analysis
             score_count = len(scores_df)
-            users_with_okr = len(scores_df[scores_df['Has OKR'] == 'Yes'])
-            users_without_okr = len(scores_df[scores_df['Has OKR'] == 'No'])
-            
-            st.success(f"✅ Score Analysis complete: {score_count} total users ({users_with_okr} with Monthly OKR Movement + {users_without_okr} without OKR)")
-            
-            # Validation - đảm bảo sử dụng chính xác dữ liệu từ Monthly OKR Analysis
-            if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
-                monthly_okr_count = st.session_state['monthly_okr_count']
-                if score_count == monthly_okr_count:
-                    st.success(f"✅ PERFECT MATCH: Using EXACT {score_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
-                    st.info("📊 OKR Movement values are taken directly from Monthly OKR Analysis")
+            if analyzer.final_df is not None and not analyzer.final_df.empty:
+                okr_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
+                if score_count != okr_count:
+                    st.warning(f"⚠️ Data mismatch detected: Score analysis has {score_count} users, OKR analysis has {okr_count} users")
                 else:
-                    st.error(f"❌ COUNT MISMATCH: Score Analysis has {score_count} users, but Monthly OKR Analysis has {monthly_okr_count} users")
-                    st.error("🔄 Data inconsistency detected - please check data source")
-            
-            if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
-                total_filtered = len(analyzer.filtered_members_df)
-                st.info(f"👥 Total Filtered Members: {total_filtered} users")
-                if score_count == total_filtered:
-                    st.success(f"✅ Perfect coverage: Score Analysis includes all {total_filtered} filtered members")
+                    st.success(f"✅ Data consistency confirmed: {score_count} users in both analyses")
             
             _display_score_metrics(scores_df)
             _display_score_distribution(scores_df)
@@ -2202,7 +2199,7 @@ def _create_user_scores_dataframe(users: List[User]) -> pd.DataFrame:
             'Name': user.name,
             'Has OKR': 'Yes' if user.co_OKR == 1 else 'No',
             'Check-in': 'Yes' if user.checkin == 1 else 'No',
-            'OKR Movement (Monthly)': user.dich_chuyen_OKR,  # Lấy từ dịch chuyển tháng
+            'OKR Movement': user.dich_chuyen_OKR,
             'Score': user.score
         })
     return pd.DataFrame(user_data)
@@ -2220,8 +2217,8 @@ def _display_score_metrics(scores_df: pd.DataFrame):
         st.metric("High Performers (≥3.0)", high_performers)
     
     with col3:
-        median_score = scores_df['Score'].median()
-        st.metric("Median Score", f"{median_score:.2f}")
+        low_performers = len(scores_df[scores_df['Score'] < 2.0])
+        st.metric("Need Support (<2.0)", low_performers)
     
     with col4:
         has_okr_count = len(scores_df[scores_df['Has OKR'] == 'Yes'])
@@ -2241,9 +2238,15 @@ def _display_score_distribution(scores_df: pd.DataFrame):
 def _display_score_tables(scores_df: pd.DataFrame):
     """Display score tables"""
     # All performers sorted by score
-    st.subheader("📊 Tất cả nhân viên (exact data from 'Tất cả nhân viên tiến bộ (tháng)' + calculated has_okr/score/checkin)")
+    st.subheader("📊 Tất cả nhân viên có goal (sắp xếp theo điểm)")
     all_performers = scores_df.sort_values('Score', ascending=False)
     st.dataframe(all_performers, use_container_width=True, hide_index=True)
+    
+    # Users needing support
+    low_performers_df = scores_df[scores_df['Score'] < 2.0]
+    if not low_performers_df.empty:
+        st.subheader("⚠️ Users Needing Support")
+        st.dataframe(low_performers_df, use_container_width=True, hide_index=True)
 
 def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
     """Display export options for scores"""
@@ -2707,20 +2710,7 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
                 okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly()
             
             if okr_shifts_monthly:
-                # Lưu TOÀN BỘ dữ liệu Monthly OKR Analysis (tên + dịch chuyển tháng)
-                monthly_okr_data = []
-                for shift in okr_shifts_monthly:
-                    monthly_okr_data.append({
-                        'user_name': shift['user_name'],
-                        'okr_shift_monthly': shift.get('okr_shift_monthly', 0)
-                    })
-                
-                st.session_state['monthly_okr_data'] = monthly_okr_data
-                st.session_state['monthly_okr_users'] = set([shift['user_name'] for shift in okr_shifts_monthly])
-                st.session_state['monthly_okr_count'] = len(monthly_okr_data)
-                
                 show_okr_analysis(okr_shifts_monthly, DateUtils.get_last_month_end_date(), "monthly")
-                st.success(f"✅ 'Tất cả nhân viên tiến bộ (tháng)' table: {len(monthly_okr_data)} users saved → will be used for User Score Analysis")
             else:
                 st.warning("No monthly OKR shift data available")
         else:
@@ -2863,22 +2853,6 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         okr_shifts = analyzer.calculate_okr_shifts_by_user()
         okr_shifts_monthly = analyzer.calculate_okr_shifts_by_user_monthly() if DateUtils.should_calculate_monthly_shift() else []
         
-        # Lưu danh sách users từ Monthly OKR Analysis cho Excel consistency
-        if okr_shifts_monthly:
-            # Lưu TOÀN BỘ dữ liệu Monthly OKR Analysis cho email export
-            monthly_okr_data = []
-            for shift in okr_shifts_monthly:
-                monthly_okr_data.append({
-                    'user_name': shift['user_name'],
-                    'okr_shift_monthly': shift.get('okr_shift_monthly', 0)
-                })
-            
-            st.session_state['monthly_okr_data'] = monthly_okr_data
-            monthly_okr_users = set([shift['user_name'] for shift in okr_shifts_monthly])
-            st.session_state['monthly_okr_users'] = monthly_okr_users
-            st.session_state['monthly_okr_count'] = len(monthly_okr_users)
-            st.info(f"💾 Email: Monthly OKR data saved for Excel: {len(monthly_okr_users)} users with exact monthly shifts")
-        
         # Create Excel for recipients
         status_text.text("Creating Excel report...")
         progress_bar.progress(0.6)
@@ -2973,21 +2947,15 @@ def _create_excel_report(analyzer) -> BytesIO:
     user_manager.calculate_scores()
     users = user_manager.get_users()
     
-    # Excel coverage information
-    excel_user_count = len(users)
-    users_with_okr_in_excel = len([u for u in users if u.co_OKR == 1])
-    users_without_okr_in_excel = len([u for u in users if u.co_OKR == 0])
-    
-    st.success(f"✅ Excel export ready: {excel_user_count} total users ({users_with_okr_in_excel} with Monthly OKR Movement + {users_without_okr_in_excel} without OKR)")
-    
-    # Validation với Monthly OKR Analysis
-    if 'monthly_okr_count' in st.session_state and st.session_state['monthly_okr_count']:
-        monthly_okr_count = st.session_state['monthly_okr_count']
-        if excel_user_count == monthly_okr_count:
-            st.success(f"✅ EXCEL PERFECT MATCH: Using EXACT {excel_user_count} users from 'Tất cả nhân viên tiến bộ (tháng)' table")
-            st.info("📊 Excel OKR Movement = exact monthly shifts from Monthly OKR Analysis")
+    # Validation - đảm bảo Excel có cùng số lượng users với OKR analysis
+    if analyzer.final_df is not None and not analyzer.final_df.empty:
+        excel_user_count = len(users)
+        okr_user_count = len(set(analyzer.final_df['goal_user_name'].dropna().unique()))
+        
+        if excel_user_count != okr_user_count:
+            st.warning(f"⚠️ Excel export mismatch: Excel has {excel_user_count} users, OKR analysis has {okr_user_count} users")
         else:
-            st.error(f"❌ EXCEL COUNT MISMATCH: Excel has {excel_user_count} users, but Monthly OKR Analysis has {monthly_okr_count} users")
+            st.info(f"✅ Excel export consistency: {excel_user_count} users (matching OKR analysis)")
     
     wb = export_to_excel(users)
     excel_buffer = BytesIO()
@@ -3204,9 +3172,9 @@ def setup_enhanced_email_configuration(analyzer):
             "Send emails to:",
             ["all_with_goals", "special", "all", "okr_users"],
             format_func=lambda x: {
-                "special": "Special recipients only (tts122403@gmail.com)",
+                "special": "Special recipients only (xnk3)",
                 "all": "All filtered members",
-                "all_with_goals": "All members with goals (Excel contains Monthly OKR Movement)",
+                "all_with_goals": "All members with goals (default - with Excel)",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
             index=0  # Mặc định chọn all_with_goals
@@ -3236,7 +3204,7 @@ def _display_recipient_info_with_count(recipient_option: str, analyzer=None, sel
                 if total_email_count > 0:
                     st.success(f"📧 Found {total_email_count} email addresses for All members with goals")
                     st.info("📎 Excel attachment will be included for all recipients")
-                    st.info(f"📋 Will send to all {total_email_count} members (Excel contains Monthly OKR Movement data)")
+                    st.info(f"📋 Will send to all {total_email_count} members (OKR filtering will be applied if data is loaded)")
                 else:
                     st.warning("⚠️ Found 0 valid email addresses in filtered members")
                     
@@ -3305,7 +3273,7 @@ ACCOUNT_ACCESS_TOKEN=your_account_token_here
         st.session_state[auto_run_key] = True
         with st.spinner("🚀 Auto-running analysis..."):
             run_analysis(analyzer, selected_cycle, show_missing_analysis)
-
+    
     # Main action buttons
     col1, col2 = st.columns(2)
     
