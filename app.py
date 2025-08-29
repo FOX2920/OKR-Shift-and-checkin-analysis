@@ -541,9 +541,9 @@ class UserManager:
                 
                 # Hiển thị chi tiết cho một vài người đầu tiên
                 st.markdown("---")
-                st.markdown("### 📊 Chi tiết theo tuần (5 người đầu tiên)")
+                st.markdown("### 📊 Chi tiết theo tuần")
                 
-                sample_users = list(debug_info["details"].keys())[:5]
+                sample_users = list(debug_info["details"].keys())
                 for user_name in sample_users:
                     details = debug_info["details"][user_name]
                     status_icon = "✅" if details['meets_criteria'] else "❌"
