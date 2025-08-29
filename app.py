@@ -247,7 +247,8 @@ class UserManager:
             user_checkins = self.checkin_df[self.checkin_df['user_id'].astype(str) == str(user_id)]
             for _, entry in user_checkins.iterrows():
                 try:
-                    checkin_date = datetime.fromtimestamp(float(entry.get('day')), tz=timezone.utc)
+                    # Sử dụng local time thay vì UTC để tương thích với checkin.py
+                    checkin_date = datetime.fromtimestamp(float(entry.get('day')))
                     checkins.append(checkin_date)
                 except (ValueError, TypeError):
                     continue
@@ -272,13 +273,20 @@ class UserManager:
         # Lấy tất cả check-in của user trong tháng hiện tại
         checkins = self._get_user_checkins(user_id)
         
-        # Lọc checkins trong tháng hiện tại (chỉ lấy ngày, không timezone)
+        # Lọc checkins trong tháng hiện tại - tương thích với logic checkin.py
         checkins_this_month = []
+        current_month_year = f"{current_year}-{current_month:02d}"
+        
         for checkin_dt in checkins:
-            checkin_date = checkin_dt.date() if hasattr(checkin_dt, 'date') else checkin_dt
-            # Kiểm tra tháng và năm
-            if checkin_date.month == current_month and checkin_date.year == current_year:
-                checkins_this_month.append(checkin_date)
+            try:
+                # Convert về date và check theo format như checkin.py
+                checkin_date = checkin_dt.date() if hasattr(checkin_dt, 'date') else checkin_dt
+                checkin_month_year = f"{checkin_dt.year}-{checkin_dt.month:02d}"
+                
+                if checkin_month_year == current_month_year:
+                    checkins_this_month.append(checkin_date)
+            except (AttributeError, ValueError):
+                continue
         
         if not checkins_this_month:
             week_details = []
@@ -3130,6 +3138,12 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
         else:
             current_month = datetime.now().month
             quarter_months = {1: "Q1", 4: "Q2", 7: "Q3", 10: "Q4"}
+
+        
+        # Real-time Check-in Preview (mới thêm)
+        st.subheader("📈 Preview Check-in")
+        with st.spinner("Loading real-time check-in preview..."):
+            show_realtime_checkin_preview(analyzer)
         
         # User Score Analysis (sau khi đã có Monthly OKR Analysis data)  
         st.subheader("🏆 Điểm số")
