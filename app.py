@@ -13,6 +13,7 @@ import os
 import smtplib
 from collections import defaultdict
 import openpyxl
+import calendar
 from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from email.mime.multipart import MIMEMultipart
@@ -233,54 +234,56 @@ class UserManager:
         current_month = today.month
         current_year = today.year
         
-        month_start = datetime(current_year, current_month, 1).replace(tzinfo=timezone.utc)
-        if current_month == 12:
-            month_end = datetime(current_year + 1, 1, 1).replace(tzinfo=timezone.utc) - timedelta(seconds=1)
-        else:
-            month_end = datetime(current_year, current_month + 1, 1).replace(tzinfo=timezone.utc) - timedelta(seconds=1)
+        # Lấy tất cả tuần trong tháng theo logic checkin.py
+        month_weeks = self._get_weeks_in_current_month()
+        total_weeks_in_month = len(month_weeks)
         
         # Lấy tất cả check-in của user trong tháng hiện tại
         checkins = self._get_user_checkins(user_id)
-        checkins_this_month = [dt for dt in checkins if month_start <= dt <= month_end]
         
-        # Lấy tất cả tuần trong tháng
-        month_weeks = self._get_month_weeks(current_year, current_month)
-        total_weeks_in_month = len(month_weeks)
+        # Lọc checkins trong tháng hiện tại (chỉ lấy ngày, không timezone)
+        checkins_this_month = []
+        for checkin_dt in checkins:
+            checkin_date = checkin_dt.date() if hasattr(checkin_dt, 'date') else checkin_dt
+            # Kiểm tra tháng và năm
+            if checkin_date.month == current_month and checkin_date.year == current_year:
+                checkins_this_month.append(checkin_date)
         
         if not checkins_this_month:
+            week_details = []
+            for week in month_weeks:
+                week_details.append({
+                    'week_range': week['week_range'],
+                    'has_checkin': False,
+                    'checkin_dates': []
+                })
+            
             return {
                 'meets_criteria': False,
                 'weeks_with_checkins': 0,
                 'total_weeks_in_month': total_weeks_in_month,
                 'checkins_count': 0,
-                'week_details': []
+                'week_details': week_details
             }
         
-        # Đếm số tuần có check-in trong tháng hiện tại theo logic tùy chỉnh
+        # Đếm số tuần có check-in theo logic của checkin.py
         weeks_with_checkins = set()
-        week_details = []
+        week_checkins = {i: [] for i in range(len(month_weeks))}
         
-        # Tạo dict để track check-in theo tuần
-        week_checkins = {}
         for checkin_date in checkins_this_month:
-            checkin_week = self._get_week_of_date(checkin_date)
-            if checkin_week in month_weeks:
-                weeks_with_checkins.add(checkin_week)
-                if checkin_week not in week_checkins:
-                    week_checkins[checkin_week] = []
-                week_checkins[checkin_week].append(checkin_date.strftime("%d/%m"))
+            week_number = self._get_week_number_for_date(checkin_date, month_weeks)
+            if week_number is not None:
+                weeks_with_checkins.add(week_number)
+                week_checkins[week_number].append(checkin_date.strftime("%d/%m"))
         
         # Tạo chi tiết cho từng tuần
-        for week in sorted(month_weeks):
-            monday_date = datetime(week[0], week[1], week[2])
-            sunday_date = monday_date + timedelta(days=6)
-            week_range = f"{monday_date.strftime('%d/%m')} - {sunday_date.strftime('%d/%m')}"
-            
-            has_checkin = week in weeks_with_checkins
-            checkin_dates = week_checkins.get(week, [])
+        week_details = []
+        for i, week in enumerate(month_weeks):
+            has_checkin = i in weeks_with_checkins
+            checkin_dates = week_checkins.get(i, [])
             
             week_details.append({
-                'week_range': week_range,
+                'week_range': week['week_range'],
                 'has_checkin': has_checkin,
                 'checkin_dates': checkin_dates
             })
@@ -296,33 +299,56 @@ class UserManager:
             'week_details': week_details
         }
 
-    def _get_month_weeks(self, year: int, month: int) -> set:
-        """Get all weeks that belong to the specified month
-        Tuần thuộc về tháng nếu có ít nhất 1 ngày của tháng trong tuần đó"""
-        month_start = datetime(year, month, 1)
-        if month == 12:
-            month_end = datetime(year + 1, 1, 1) - timedelta(days=1)
-        else:
-            month_end = datetime(year, month + 1, 1) - timedelta(days=1)
+    def _get_weeks_in_current_month(self):
+        """
+        Lấy tất cả các tuần trong tháng hiện tại theo logic checkin.py
+        Quy tắc: Nếu ngày đầu/cuối tháng rơi vào thứ 2-6, vẫn tính là tuần của tháng đó
+        """
         
-        weeks = set()
-        current_date = month_start
+        now = datetime.now()
+        year = now.year
+        month = now.month
         
-        # Duyệt từng ngày trong tháng và tìm tuần chứa ngày đó
-        while current_date <= month_end:
-            week_identifier = self._get_week_of_date(current_date)
-            weeks.add(week_identifier)
-            current_date += timedelta(days=1)
+        # Ngày đầu và cuối tháng
+        first_day = datetime(year, month, 1)
+        last_day = datetime(year, month, calendar.monthrange(year, month)[1])
+        
+        weeks = []
+        current_date = first_day
+        
+        while current_date <= last_day:
+            # Tìm ngày thứ 2 của tuần chứa current_date
+            days_since_monday = current_date.weekday()
+            week_start = current_date - timedelta(days=days_since_monday)
+            
+            # Điều chỉnh week_start nếu nó trước ngày đầu tháng
+            week_start = max(week_start, first_day)
+            
+            # Tìm ngày chủ nhật của tuần
+            week_end = week_start + timedelta(days=6)
+            
+            # Điều chỉnh week_end nếu nó sau ngày cuối tháng  
+            week_end = min(week_end, last_day)
+            
+            # Thêm tuần vào danh sách
+            weeks.append({
+                'week_number': len(weeks) + 1,
+                'start_date': week_start.date(),
+                'end_date': week_end.date(),
+                'week_range': f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m')}"
+            })
+            
+            # Chuyển sang tuần tiếp theo: bắt đầu từ ngày sau week_end
+            current_date = week_end + timedelta(days=1)
         
         return weeks
     
-    def _get_week_of_date(self, date: datetime) -> tuple:
-        """Get week identifier for a date (year, week_start_monday)"""
-        # Tìm thứ 2 của tuần chứa ngày này
-        days_since_monday = date.weekday()
-        monday_of_week = date - timedelta(days=days_since_monday)
-        # Sử dụng ngày thứ 2 làm identifier cho tuần
-        return (monday_of_week.year, monday_of_week.month, monday_of_week.day)
+    def _get_week_number_for_date(self, checkin_date, month_weeks):
+        """Xác định checkin_date thuộc tuần nào trong month_weeks"""
+        for i, week in enumerate(month_weeks):
+            if week['start_date'] <= checkin_date <= week['end_date']:
+                return i
+        return None
 
     def update_okr_movement(self):
         """Update OKR movement for each user - ALWAYS use monthly calculation"""
@@ -565,6 +591,92 @@ class UserManager:
     def get_users(self) -> List[User]:
         """Return list of all users"""
         return list(self.users.values())
+    
+    def get_realtime_checkin_preview(self) -> pd.DataFrame:
+        """Get real-time preview of check-in scoring without waiting for last week"""
+        preview_data = []
+        
+        for user in self.users.values():
+            criteria_details = self._get_monthly_weekly_criteria_details(user.user_id)
+            weeks_count = criteria_details['weeks_with_checkins']
+            total_weeks = criteria_details['total_weeks_in_month']
+            checkins_count = criteria_details['checkins_count']
+            
+            # Tính điểm preview dựa trên tiêu chí 3 tuần
+            projected_score = 0.5 if weeks_count >= 3 else 0
+            weeks_needed = max(0, 3 - weeks_count)
+            
+            # Xác định status
+            if weeks_count >= 3:
+                status = "✅ Đạt tiêu chí"
+                status_color = "success"
+            elif weeks_needed == 1:
+                status = "⚠️ Cần 1 tuần nữa"
+                status_color = "warning"
+            else:
+                status = f"❌ Cần {weeks_needed} tuần nữa"
+                status_color = "error"
+            
+            # Tính phần trăm hoàn thành
+            completion_rate = (weeks_count / 3) * 100 if weeks_count <= 3 else 100
+            
+            preview_data.append({
+                'Tên': user.name,
+                'Tuần có check-in': f"{weeks_count}/{total_weeks}",
+                'Tổng số check-in': checkins_count,
+                'Điểm dự kiến': projected_score,
+                'Hoàn thành (%)': f"{completion_rate:.0f}%",
+                'Trạng thái': status,
+                'Cần thêm': weeks_needed if weeks_needed > 0 else 0,
+                '_status_color': status_color  # For styling
+            })
+        
+        # Sort by completion rate descending, then by weeks_count descending
+        preview_data.sort(key=lambda x: (x['Điểm dự kiến'], x['Tuần có check-in'].split('/')[0]), reverse=True)
+        
+        return pd.DataFrame(preview_data)
+    
+    def generate_checkin_alerts(self) -> List[Dict]:
+        """Generate alerts for users who need more check-ins"""
+        alerts = []
+        today = datetime.now()
+        current_week = today.isocalendar()[1]
+        days_left_in_month = (datetime(today.year, today.month + 1 if today.month < 12 else today.year + 1, 1) - today - timedelta(days=1)).days
+        
+        for user in self.users.values():
+            criteria_details = self._get_monthly_weekly_criteria_details(user.user_id)
+            weeks_count = criteria_details['weeks_with_checkins']
+            
+            if weeks_count < 3:
+                weeks_needed = 3 - weeks_count
+                
+                # Xác định mức độ khẩn cấp
+                if days_left_in_month <= 7:
+                    urgency = "🔴 KHẨN CẤP"
+                    urgency_level = 3
+                elif days_left_in_month <= 14:
+                    urgency = "🟡 CẦN CHÚ Ý"
+                    urgency_level = 2
+                else:
+                    urgency = "🟢 BÌN HỒ"
+                    urgency_level = 1
+                
+                alerts.append({
+                    'user_name': user.name,
+                    'user_id': user.user_id,
+                    'urgency': urgency,
+                    'urgency_level': urgency_level,
+                    'weeks_current': weeks_count,
+                    'weeks_needed': weeks_needed,
+                    'days_left': days_left_in_month,
+                    'message': f"Cần check-in thêm {weeks_needed} tuần để đạt 0.5 điểm",
+                    'details': criteria_details
+                })
+        
+        # Sort by urgency level (highest first), then by weeks needed (most needed first)
+        alerts.sort(key=lambda x: (x['urgency_level'], x['weeks_needed']), reverse=True)
+        
+        return alerts
 
 
 class APIClient:
@@ -2286,6 +2398,130 @@ def get_default_recipients() -> List[str]:
 
 # ==================== STREAMLIT UI FUNCTIONS ====================
 
+def show_realtime_checkin_preview(analyzer):
+    """Show real-time check-in preview without waiting for last week"""
+    st.subheader("📈 Real-time Check-in Preview")
+    
+    try:
+        # Tạo user manager để lấy dữ liệu preview
+        user_manager = create_user_manager_with_monthly_calculation(analyzer)
+        if not user_manager:
+            st.warning("⚠️ Không thể tạo user manager. Vui lòng chạy Monthly OKR Analysis trước.")
+            return
+            
+        user_manager.update_checkins()
+        
+        # Lấy preview data
+        preview_df = user_manager.get_realtime_checkin_preview()
+        alerts = user_manager.generate_checkin_alerts()
+        
+        if preview_df.empty:
+            st.info("📊 Không có dữ liệu check-in để hiển thị")
+            return
+        
+        # Hiển thị metrics tổng quan
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_users = len(preview_df)
+            st.metric("Tổng số người", total_users)
+        
+        with col2:
+            achieved_users = len(preview_df[preview_df['Điểm dự kiến'] >= 0.5])
+            st.metric("Đạt tiêu chí", f"{achieved_users}/{total_users}")
+        
+        with col3:
+            avg_weeks = preview_df['Tuần có check-in'].str.split('/').str[0].astype(int).mean()
+            st.metric("TB tuần check-in", f"{avg_weeks:.1f}")
+        
+        with col4:
+            urgent_alerts = len([a for a in alerts if a['urgency_level'] >= 3])
+            st.metric("Cảnh báo khẩn", urgent_alerts)
+        
+        # Hiển thị bảng preview
+        st.markdown("### 📊 Bảng điểm dự kiến")
+        
+        # Tạo styled dataframe
+        display_df = preview_df.drop(columns=['_status_color'])
+        
+        # Style dataframe với màu sắc dựa trên trạng thái
+        def style_preview_table(val, col_name):
+            if col_name == 'Trạng thái':
+                if '✅' in str(val):
+                    return 'background-color: #d4edda; color: #155724;'
+                elif '⚠️' in str(val):
+                    return 'background-color: #fff3cd; color: #856404;'
+                elif '❌' in str(val):
+                    return 'background-color: #f8d7da; color: #721c24;'
+            elif col_name == 'Điểm dự kiến':
+                if float(val) >= 0.5:
+                    return 'background-color: #d4edda; font-weight: bold;'
+                else:
+                    return 'background-color: #f8d7da;'
+            return ''
+        
+        # Apply styling
+        styled_df = display_df.style.applymap(lambda x: style_preview_table(x, display_df.columns[display_df.iloc[0].tolist().index(x) if x in display_df.iloc[0].tolist() else -1]) if hasattr(display_df, 'columns') else '', subset=None)
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        # Hiển thị alerts nếu có
+        if alerts:
+            st.markdown("### 🚨 Cảnh báo Check-in")
+            
+            # Group alerts by urgency
+            urgent_alerts = [a for a in alerts if a['urgency_level'] >= 3]
+            warning_alerts = [a for a in alerts if a['urgency_level'] == 2]
+            info_alerts = [a for a in alerts if a['urgency_level'] == 1]
+            
+            if urgent_alerts:
+                with st.expander(f"🔴 KHẨN CẤP ({len(urgent_alerts)} người)", expanded=True):
+                    for alert in urgent_alerts:
+                        st.error(f"**{alert['user_name']}**: {alert['message']} (còn {alert['days_left']} ngày)")
+            
+            if warning_alerts:
+                with st.expander(f"🟡 CẦN CHÚ Ý ({len(warning_alerts)} người)"):
+                    for alert in warning_alerts:
+                        st.warning(f"**{alert['user_name']}**: {alert['message']} (còn {alert['days_left']} ngày)")
+            
+            if info_alerts:
+                with st.expander(f"🟢 BÌNH THƯỜNG ({len(info_alerts)} người)"):
+                    for alert in info_alerts:
+                        st.info(f"**{alert['user_name']}**: {alert['message']} (còn {alert['days_left']} ngày)")
+        
+        # Export options
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📊 Export Preview Data"):
+                csv = preview_df.drop(columns=['_status_color']).to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"checkin_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+        
+        with col2:
+            if st.button("🔄 Refresh Data"):
+                st.rerun()
+                
+        # Thêm thông tin giải thích
+        st.markdown("---")
+        st.markdown("""
+        ### ℹ️ Giải thích
+        - **Điểm dự kiến**: Điểm check-in sẽ nhận được nếu duy trì hiện trạng đến cuối tháng
+        - **Tuần có check-in**: Số tuần đã có ít nhất 1 lần check-in / Tổng số tuần trong tháng  
+        - **Cần thêm**: Số tuần check-in cần bổ sung để đạt 0.5 điểm
+        - **Cảnh báo**: Dựa trên số ngày còn lại trong tháng và tuần cần bổ sung
+        """)
+        
+        return preview_df
+        
+    except Exception as e:
+        st.error(f"Lỗi hiển thị preview: {e}")
+        return pd.DataFrame()
+
 def show_user_score_analysis(analyzer):
     """Show user score analysis using integrated monthly calculation"""
     st.subheader("🏆 Điểm số người dùng")
@@ -2862,7 +3098,12 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
             quarter_months = {1: "Q1", 4: "Q2", 7: "Q3", 10: "Q4"}
 
         
-        # User Score Analysis (sau khi đã có Monthly OKR Analysis data)
+        # Real-time Check-in Preview (mới thêm)
+        st.subheader("📈 Preview Check-in")
+        with st.spinner("Loading real-time check-in preview..."):
+            show_realtime_checkin_preview(analyzer)
+        
+        # User Score Analysis (sau khi đã có Monthly OKR Analysis data)  
         st.subheader("🏆 Điểm số")
         with st.spinner("Calculating user scores with monthly OKR movement..."):
             show_user_score_analysis(analyzer)
