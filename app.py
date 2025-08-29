@@ -319,16 +319,12 @@ class UserManager:
         while current_date <= last_day:
             # Tìm ngày thứ 2 của tuần chứa current_date
             days_since_monday = current_date.weekday()
-            week_start = current_date - timedelta(days=days_since_monday)
+            original_week_start = current_date - timedelta(days=days_since_monday)
+            original_week_end = original_week_start + timedelta(days=6)
             
-            # Điều chỉnh week_start nếu nó trước ngày đầu tháng
-            week_start = max(week_start, first_day)
-            
-            # Tìm ngày chủ nhật của tuần
-            week_end = week_start + timedelta(days=6)
-            
-            # Điều chỉnh week_end nếu nó sau ngày cuối tháng  
-            week_end = min(week_end, last_day)
+            # Điều chỉnh để chỉ lấy phần trong tháng
+            week_start = max(original_week_start, first_day)
+            week_end = min(original_week_end, last_day)
             
             # Thêm tuần vào danh sách
             weeks.append({
@@ -338,8 +334,8 @@ class UserManager:
                 'week_range': f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m')}"
             })
             
-            # Chuyển sang tuần tiếp theo: bắt đầu từ ngày sau week_end
-            current_date = week_end + timedelta(days=1)
+            # Chuyển sang tuần tiếp theo: bắt đầu từ ngày sau original_week_end
+            current_date = original_week_end + timedelta(days=1)
         
         return weeks
     
