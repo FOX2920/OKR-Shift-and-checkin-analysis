@@ -93,8 +93,8 @@ class DateUtils:
     @staticmethod
     def is_last_week_of_month() -> bool:
         """
+        Exact copy of is_last_week_of_month from checkin.py
         Kiểm tra xem hiện tại có phải tuần cuối cùng của tháng không
-        Copy y nguyên logic từ checkin.py
         """
         now = datetime.now()
         weeks = DateUtils._get_weeks_in_current_month()
@@ -108,7 +108,9 @@ class DateUtils:
     @staticmethod
     def _get_weeks_in_current_month():
         """
-        Lấy tất cả các tuần trong tháng hiện tại - copy từ checkin.py
+        Exact copy of get_weeks_in_current_month from checkin.py
+        Lấy tất cả các tuần trong tháng hiện tại
+        Quy tắc: Nếu ngày đầu/cuối tháng rơi vào thứ 2-6, vẫn tính là tuần của tháng đó
         """
         now = datetime.now()
         year = now.year
@@ -241,14 +243,29 @@ class UserManager:
                 user.checkin = 0
 
     def _get_user_checkins(self, user_id) -> List[datetime]:
-        """Get all checkin dates for a user"""
+        """Get all checkin dates for a user - Using checkin data from final_df like checkin.py"""
         checkins = []
-        if not self.checkin_df.empty and 'user_id' in self.checkin_df.columns and 'day' in self.checkin_df.columns:
-            user_checkins = self.checkin_df[self.checkin_df['user_id'].astype(str) == str(user_id)]
+        
+        # Use final_df with checkin data like checkin.py does
+        if self.final_df is not None and not self.final_df.empty:
+            # Get user name first
+            user_name = self.user_name_map.get(str(user_id), '')
+            if not user_name:
+                return checkins
+                
+            # Get checkins for this user from final_df (equivalent to checkins_df in checkin.py)
+            user_checkins = self.final_df[
+                (self.final_df['goal_user_name'] == user_name) &
+                (self.final_df['checkin_since'].notna()) &
+                (self.final_df['checkin_since'] != '')
+            ]
+            
             for _, entry in user_checkins.iterrows():
                 try:
-                    # Sử dụng local time thay vì UTC để tương thích với checkin.py
-                    checkin_date = datetime.fromtimestamp(float(entry.get('day')))
+                    # Parse checkin_since to datetime - same format as checkin.py
+                    checkin_date_str = entry.get('checkin_since', '')
+                    if checkin_date_str:
+                        checkin_date = pd.to_datetime(checkin_date_str)
                     checkins.append(checkin_date)
                 except (ValueError, TypeError):
                     continue
@@ -260,37 +277,46 @@ class UserManager:
         return result['meets_criteria']
     
     def _get_monthly_weekly_criteria_details(self, user_id) -> dict:
-        """Get detailed information about monthly weekly criteria for a user"""
-        # Tính ngày đầu và cuối tháng hiện tại
-        today = datetime.now()
-        current_month = today.month
-        current_year = today.year
+        """Get detailed information about monthly weekly criteria for a user - Exact copy from checkin.py logic"""
         
-        # Lấy tất cả tuần trong tháng theo logic checkin.py
-        month_weeks = self._get_weeks_in_current_month()
-        total_weeks_in_month = len(month_weeks)
+        # Get user name from user_id
+        user_name = self.user_name_map.get(str(user_id), '')
+        if not user_name:
+            return {
+                'meets_criteria': False,
+                'weeks_with_checkins': 0,
+                'total_weeks_in_month': 0,
+                'checkins_count': 0,
+                'week_details': []
+            }
         
-        # Lấy tất cả check-in của user trong tháng hiện tại
-        checkins = self._get_user_checkins(user_id)
+        # Use exact logic from checkin.py calculate_weekly_checkin_scores
+        now = datetime.now()
         
-        # Lọc checkins trong tháng hiện tại - tương thích với logic checkin.py
-        checkins_this_month = []
-        current_month_year = f"{current_year}-{current_month:02d}"
+        # Get weeks in current month - exact copy from checkin.py
+        current_month_weeks = self._get_weeks_in_current_month_from_checkin_py()
+        current_month_year = f"{now.year}-{now.month:02d}"
         
-        for checkin_dt in checkins:
-            try:
-                # Convert về date và check theo format như checkin.py
-                checkin_date = checkin_dt.date() if hasattr(checkin_dt, 'date') else checkin_dt
-                checkin_month_year = f"{checkin_dt.year}-{checkin_dt.month:02d}"
-                
-                if checkin_month_year == current_month_year:
-                    checkins_this_month.append(checkin_date)
-            except (AttributeError, ValueError):
-                continue
+        # Get checkins data from final_df (equivalent to checkins_df in checkin.py)
+        if self.final_df is None or self.final_df.empty:
+            return {
+                'meets_criteria': False,
+                'weeks_with_checkins': 0,
+                'total_weeks_in_month': len(current_month_weeks),
+                'checkins_count': 0,
+                'week_details': []
+            }
         
-        if not checkins_this_month:
+        # Filter checkins for this user and current month - exact logic from checkin.py
+        user_checkins = self.final_df[
+            (self.final_df['goal_user_name'] == user_name) &
+            (self.final_df['checkin_since'].notna()) &
+            (self.final_df['checkin_since'] != '')
+        ].copy()
+        
+        if user_checkins.empty:
             week_details = []
-            for week in month_weeks:
+            for week in current_month_weeks:
                 week_details.append({
                     'week_range': week['week_range'],
                     'has_checkin': False,
@@ -300,36 +326,64 @@ class UserManager:
             return {
                 'meets_criteria': False,
                 'weeks_with_checkins': 0,
-                'total_weeks_in_month': total_weeks_in_month,
+                'total_weeks_in_month': len(current_month_weeks),
                 'checkins_count': 0,
                 'week_details': week_details
             }
         
-        # Xác định checkin thuộc tuần nào - sử dụng logic từ checkin.py
+        # Convert checkin dates and filter by current month - exact logic from checkin.py
+        user_checkins['checkin_date'] = pd.to_datetime(user_checkins['checkin_since']).dt.date
+        user_checkins['checkin_month_year'] = pd.to_datetime(user_checkins['checkin_since']).dt.strftime('%Y-%m')
+        
+        current_month_checkins = user_checkins[user_checkins['checkin_month_year'] == current_month_year].copy()
+        
+        if current_month_checkins.empty:
+            week_details = []
+            for week in current_month_weeks:
+                week_details.append({
+                    'week_range': week['week_range'],
+                    'has_checkin': False,
+                    'checkin_dates': []
+                })
+            
+            return {
+                'meets_criteria': False,
+                'weeks_with_checkins': 0,
+                'total_weeks_in_month': len(current_month_weeks),
+                'checkins_count': 0,
+                'week_details': week_details
+            }
+        
+        # Determine which week each checkin belongs to - exact logic from checkin.py
         def get_week_number(checkin_date):
-            for week in month_weeks:
+            for week in current_month_weeks:
                 if week['start_date'] <= checkin_date <= week['end_date']:
                     return week['week_number']
             return None
         
-        # Đếm số tuần có checkin
-        weeks_with_checkins = set()
-        week_checkins = {}
+        current_month_checkins['week_number'] = current_month_checkins['checkin_date'].apply(get_week_number)
         
-        for checkin_date in checkins_this_month:
-            week_number = get_week_number(checkin_date)
-            if week_number is not None:
-                weeks_with_checkins.add(week_number)
-                if week_number not in week_checkins:
-                    week_checkins[week_number] = []
-                week_checkins[week_number].append(checkin_date.strftime("%d/%m"))
+        # Count weeks with checkins - exact logic from checkin.py
+        user_weekly_checkins = current_month_checkins.groupby(['week_number']).size().reset_index(name='checkins_count')
+        weeks_with_checkins = len(user_weekly_checkins['week_number'].unique())
+        total_checkins = len(current_month_checkins)
         
-        # Tạo chi tiết cho từng tuần
+        # Create week details - exact logic from checkin.py
         week_details = []
-        for week in month_weeks:
+        week_checkins_map = {}
+        
+        # Group checkins by week
+        for _, row in current_month_checkins.iterrows():
+            week_num = row['week_number']
+            if pd.notna(week_num):
+                if week_num not in week_checkins_map:
+                    week_checkins_map[week_num] = []
+                week_checkins_map[week_num].append(row['checkin_date'].strftime('%d/%m'))
+        
+        for week in current_month_weeks:
             week_number = week['week_number']
-            has_checkin = week_number in weeks_with_checkins
-            checkin_dates = week_checkins.get(week_number, [])
+            has_checkin = week_number in week_checkins_map
+            checkin_dates = week_checkins_map.get(week_number, [])
             
             week_details.append({
                 'week_range': week['week_range'],
@@ -337,16 +391,54 @@ class UserManager:
                 'checkin_dates': checkin_dates
             })
         
-        # Cần ít nhất 3 tuần có check-in trong tháng hiện tại
-        meets_criteria = len(weeks_with_checkins) >= 3
+        # Check if meets criteria (>= 3 weeks) - exact logic from checkin.py
+        meets_criteria = weeks_with_checkins >= 3
         
         return {
             'meets_criteria': meets_criteria,
-            'weeks_with_checkins': len(weeks_with_checkins),
-            'total_weeks_in_month': total_weeks_in_month,
-            'checkins_count': len(checkins_this_month),
+            'weeks_with_checkins': weeks_with_checkins,
+            'total_weeks_in_month': len(current_month_weeks),
+            'checkins_count': total_checkins,
             'week_details': week_details
         }
+
+    def _get_weeks_in_current_month_from_checkin_py(self):
+        """
+        Exact copy of get_weeks_in_current_month from checkin.py
+        Lấy tất cả các tuần trong tháng hiện tại
+        Quy tắc: Nếu ngày đầu/cuối tháng rơi vào thứ 2-6, vẫn tính là tuần của tháng đó
+        """
+        now = datetime.now()
+        year = now.year
+        month = now.month
+        
+        # Ngày đầu và cuối tháng
+        first_day = datetime(year, month, 1)
+        last_day = datetime(year, month, calendar.monthrange(year, month)[1])
+        
+        weeks = []
+        current_date = first_day
+        
+        while current_date <= last_day:
+            # Tìm ngày thứ 2 của tuần (hoặc ngày đầu tháng nếu tuần bắt đầu trước đó)
+            week_start = current_date - timedelta(days=current_date.weekday())
+            week_start = max(week_start, first_day)  # Không được trước ngày 1
+            
+            # Tìm ngày chủ nhật của tuần (hoặc ngày cuối tháng nếu tuần kết thúc sau đó)
+            week_end = week_start + timedelta(days=6)
+            week_end = min(week_end, last_day)  # Không được sau ngày cuối tháng
+            
+            weeks.append({
+                'week_number': len(weeks) + 1,
+                'start_date': week_start.date(),
+                'end_date': week_end.date(),
+                'week_range': f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m')}"
+            })
+            
+            # Chuyển sang tuần tiếp theo
+            current_date = week_end + timedelta(days=1)
+        
+        return weeks
 
     def _get_weeks_in_current_month(self):
         """
@@ -635,7 +727,7 @@ class UserManager:
         return list(self.users.values())
     
     def get_realtime_checkin_preview(self) -> pd.DataFrame:
-        """Get real-time preview of check-in scoring without waiting for last week"""
+        """Get real-time preview of check-in scoring without waiting for last week - Using checkin.py logic"""
         preview_data = []
         
         for user in self.users.values():
@@ -644,7 +736,7 @@ class UserManager:
             total_weeks = criteria_details['total_weeks_in_month']
             checkins_count = criteria_details['checkins_count']
             
-            # Tính điểm preview dựa trên tiêu chí 3 tuần
+            # Tính điểm preview dựa trên tiêu chí 3 tuần - exact logic from checkin.py
             projected_score = 0.5 if weeks_count >= 3 else 0
             weeks_needed = max(0, 3 - weeks_count)
             
@@ -719,6 +811,189 @@ class UserManager:
         alerts.sort(key=lambda x: (x['urgency_level'], x['weeks_needed']), reverse=True)
         
         return alerts
+
+    def calculate_weekly_checkin_scores(self):
+        """
+        Exact copy of calculate_weekly_checkin_scores from checkin.py
+        Tính điểm checkin theo tuần cho tháng hiện tại
+        
+        Điều kiện:
+        - Có ít nhất 3 tuần check-in trong tháng hiện tại → +0.5 điểm
+        - Không đủ 3 tuần → +0 điểm
+        - Chỉ hiển thị vào tuần cuối cùng của tháng
+        """
+        
+        # Kiểm tra có phải tuần cuối cùng của tháng không
+        if not self._is_last_week_of_month():
+            print("⚠️  Chỉ hiển thị điểm checkin vào tuần cuối cùng của tháng")
+            return None
+        
+        # Lấy thông tin các tuần trong tháng hiện tại
+        current_month_weeks = self._get_weeks_in_current_month_from_checkin_py()
+        now = datetime.now()
+        current_month_year = f"{now.year}-{now.month:02d}"
+        
+        print(f"📅 Tính điểm checkin cho tháng {now.month}/{now.year}")
+        print(f"📊 Số tuần trong tháng: {len(current_month_weeks)}")
+        
+        # Hiển thị thông tin các tuần
+        print("\n📋 Các tuần trong tháng:")
+        for week in current_month_weeks:
+            print(f"  Tuần {week['week_number']}: {week['week_range']}")
+        
+        # Process all users with final_df data (equivalent to checkins_df in checkin.py)
+        if self.final_df is None or self.final_df.empty:
+            print(f"\n⚠️  Không có checkin data")
+            return pd.DataFrame()
+        
+        # Filter checkins for current month
+        checkins_df = self.final_df.copy()
+        checkins_df['checkin_date'] = pd.to_datetime(checkins_df['checkin_since']).dt.date
+        checkins_df['checkin_month_year'] = pd.to_datetime(checkins_df['checkin_since']).dt.strftime('%Y-%m')
+        
+        current_month_checkins = checkins_df[checkins_df['checkin_month_year'] == current_month_year].copy()
+        
+        if current_month_checkins.empty:
+            print(f"\n⚠️  Không có checkin nào trong tháng {now.month}/{now.year}")
+            return pd.DataFrame()
+        
+        print(f"\n📊 Tổng checkins trong tháng: {len(current_month_checkins)}")
+        
+        # Xác định checkin thuộc tuần nào
+        def get_week_number(checkin_date):
+            for week in current_month_weeks:
+                if week['start_date'] <= checkin_date <= week['end_date']:
+                    return week['week_number']
+            return None
+        
+        current_month_checkins['week_number'] = current_month_checkins['checkin_date'].apply(get_week_number)
+        
+        # Đếm số tuần có checkin cho mỗi user
+        user_weekly_checkins = current_month_checkins.groupby(['goal_user_name', 'week_number']).size().reset_index(name='checkins_count')
+        user_weeks_with_checkins = user_weekly_checkins.groupby('goal_user_name')['week_number'].nunique().reset_index(name='weeks_with_checkins')
+        
+        # Tính điểm
+        user_weeks_with_checkins['score'] = user_weeks_with_checkins['weeks_with_checkins'].apply(
+            lambda x: 0.5 if x >= 3 else 0.0
+        )
+        
+        # Thêm thông tin chi tiết
+        user_stats = []
+        for _, user_row in user_weeks_with_checkins.iterrows():
+            user_name = user_row['goal_user_name']
+            weeks_with_checkins = user_row['weeks_with_checkins']
+            score = user_row['score']
+            
+            # Lấy thông tin chi tiết các tuần
+            user_week_details = user_weekly_checkins[user_weekly_checkins['goal_user_name'] == user_name]
+            weeks_list = sorted(user_week_details['week_number'].tolist())
+            total_checkins = user_week_details['checkins_count'].sum()
+            
+            user_stats.append({
+                'user_name': user_name,
+                'total_checkins_in_month': total_checkins,
+                'weeks_with_checkins': weeks_with_checkins,
+                'weeks_list': weeks_list,
+                'weeks_detail': ', '.join([f"T{w}" for w in weeks_list]),
+                'score': score,
+                'status': 'ĐẠT' if score > 0 else 'KHÔNG ĐẠT'
+            })
+        
+        result_df = pd.DataFrame(user_stats)
+        result_df = result_df.sort_values(['score', 'weeks_with_checkins'], ascending=[False, False])
+        
+        return result_df
+
+    def _is_last_week_of_month(self):
+        """
+        Exact copy of is_last_week_of_month from checkin.py
+        Kiểm tra xem hiện tại có phải tuần cuối cùng của tháng không
+        """
+        now = datetime.now()
+        weeks = self._get_weeks_in_current_month_from_checkin_py()
+        
+        if not weeks:
+            return False
+        
+        last_week = weeks[-1]
+        return last_week['start_date'] <= now.date() <= last_week['end_date']
+
+    def display_weekly_scoring_results(self, result_df: pd.DataFrame):
+        """
+        Exact copy of display_weekly_scoring_results from checkin.py
+        Hiển thị kết quả tính điểm theo tuần
+        """
+        if result_df is None:
+            return
+            
+        if result_df.empty:
+            print("📊 Không có dữ liệu để hiển thị")
+            return
+        
+        print("\n" + "="*80)
+        print("🏆 KẾT QUẢ ĐIỂM CHECKIN THEO TUẦN - THÁNG HIỆN TẠI")
+        print("="*80)
+        
+        # Thống kê tổng quan
+        total_users = len(result_df)
+        users_passed = len(result_df[result_df['score'] > 0])
+        users_failed = total_users - users_passed
+        
+        print(f"👥 Tổng nhân viên: {total_users}")
+        print(f"✅ Đạt điều kiện (≥3 tuần): {users_passed} người ({users_passed/total_users*100:.1f}%)")
+        print(f"❌ Không đạt (<3 tuần): {users_failed} người ({users_failed/total_users*100:.1f}%)")
+        
+        # Hiển thị chi tiết từng nhân viên
+        print(f"\n📋 CHI TIẾT TỪNG NHÂN VIÊN:")
+        print("-" * 80)
+        
+        for i, row in result_df.iterrows():
+            status_icon = "✅" if row['status'] == 'ĐẠT' else "❌"
+            print(f"{status_icon} {row['user_name']}")
+            print(f"   📊 Số tuần checkin: {row['weeks_with_checkins']}/≥3 tuần")
+            print(f"   📅 Các tuần: {row['weeks_detail']}")
+            print(f"   📈 Tổng checkins: {row['total_checkins_in_month']}")
+            print(f"   🎯 Điểm số: +{row['score']} điểm")
+            print()
+
+    def get_monthly_checkin_report(self):
+        """
+        Exact copy of get_monthly_checkin_report from checkin.py
+        Tạo báo cáo checkin theo tháng với điểm số
+        """
+        # Tính điểm weekly
+        weekly_scores = self.calculate_weekly_checkin_scores()
+        
+        if weekly_scores is not None and not weekly_scores.empty:
+            # Hiển thị kết quả
+            self.display_weekly_scoring_results(weekly_scores)
+            return weekly_scores
+        
+        return None
+
+    def demo_weekly_scoring(self):
+        """
+        Exact copy of demo_weekly_scoring from checkin.py
+        Demo function để test logic tính điểm
+        """
+        print("🔧 DEMO: Weekly Checkin Scoring System")
+        
+        # Hiển thị thông tin tuần trong tháng hiện tại
+        weeks = self._get_weeks_in_current_month_from_checkin_py()
+        now = datetime.now()
+        
+        print(f"\n📅 Tháng hiện tại: {now.month}/{now.year}")
+        print(f"📊 Số tuần: {len(weeks)}")
+        
+        for week in weeks:
+            print(f"  Tuần {week['week_number']}: {week['week_range']}")
+        
+        # Kiểm tra có phải tuần cuối không
+        is_last_week = self._is_last_week_of_month()
+        print(f"\n⏰ Hiện tại có phải tuần cuối cùng: {'CÓ' if is_last_week else 'KHÔNG'}")
+        
+        if not is_last_week:
+            print("⚠️  Chỉ hiển thị điểm vào tuần cuối cùng của tháng")
 
 
 class APIClient:
@@ -893,22 +1168,58 @@ class DataProcessor:
     
     @staticmethod
     def extract_checkin_data(all_checkins: List[Dict]) -> pd.DataFrame:
-        """Extract checkin data into DataFrame"""
+        """Extract checkin data into DataFrame - Using exact logic from checkin.py"""
         checkin_list = []
 
         for checkin in all_checkins:
             try:
-                checkin_data = DataProcessor._process_single_checkin(checkin)
-                checkin_list.append(checkin_data)
+                checkin_id = checkin.get('id', '')
+                checkin_name = checkin.get('name', '')
+                user_id = str(checkin.get('user_id', ''))
+                since_timestamp = checkin.get('since', '')
+                since_date = DataProcessor._convert_timestamp_to_datetime(since_timestamp) or ''
+                
+                # Extract form value
+                form_data = checkin.get('form', [])
+                form_value = form_data[0].get('value', '') if form_data else ''
+                
+                # Extract target info
+                obj_export = checkin.get('obj_export', {})
+                target_name = obj_export.get('name', '')
+                kr_id = str(obj_export.get('id', ''))
+                current_value = checkin.get('current_value', 0)
+                
+                checkin_list.append({
+                    'checkin_id': checkin_id,
+                    'checkin_name': checkin_name,
+                    'checkin_since': since_date,
+                    'checkin_since_timestamp': since_timestamp,
+                    'cong_viec_tiep_theo': form_value,
+                    'checkin_target_name': target_name,
+                    'checkin_kr_current_value': current_value,
+                    'kr_id': kr_id,
+                    'checkin_user_id': user_id
+                })
+                
             except Exception as e:
-                st.warning(f"Error processing checkin {checkin.get('id', 'Unknown')}: {e}")
+                st.warning(f"Warning: Error processing checkin {checkin.get('id', 'Unknown')}: {e}")
                 continue
 
         return pd.DataFrame(checkin_list)
 
     @staticmethod
+    def _convert_timestamp_to_datetime(timestamp):
+        """Convert timestamp to datetime string - Exact copy from checkin.py"""
+        if timestamp is None or timestamp == '' or timestamp == 0:
+            return None
+        try:
+            return datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S')
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
     def _process_single_checkin(checkin: Dict) -> Dict:
-        """Process a single checkin record"""
+        """Process a single checkin record - DEPRECATED, use extract_checkin_data directly"""
         checkin_id = checkin.get('id', '')
         checkin_name = checkin.get('name', '')
         user_id = str(checkin.get('user_id', ''))
@@ -1829,7 +2140,7 @@ class OKRAnalysisSystem:
         return checkin_df
 
     def _process_data(self, data_store: Dict):
-        """Process and join all data"""
+        """Process and join all data - Updated for checkin.py compatibility"""
         goals_df = data_store['goals_df']
         krs_df = data_store['krs_df']
         checkin_df = data_store['checkin_df']
@@ -1840,8 +2151,36 @@ class OKRAnalysisSystem:
         joined_df['goal_user_name'] = joined_df['goal_user_id'].map(user_id_to_name)
         self.final_df = joined_df.merge(checkin_df, on='kr_id', how='left')
         
+        # Add user_name mapping for checkin user_id - needed for checkin.py compatibility
+        if 'checkin_user_id' in self.final_df.columns:
+            self.final_df['user_name'] = self.final_df['checkin_user_id'].map(user_id_to_name)
+        
+        # Ensure we have checkin_since_timestamp column for checkin.py compatibility
+        if 'checkin_since_timestamp' not in self.final_df.columns and 'checkin_since' in self.final_df.columns:
+            # Try to extract timestamp from checkin_since if it's in datetime format
+            def extract_timestamp(since_str):
+                if pd.notna(since_str) and since_str != '':
+                    try:
+                        dt = pd.to_datetime(since_str)
+                        return int(dt.timestamp())
+                    except:
+                        return None
+                return None
+            
+            self.final_df['checkin_since_timestamp'] = self.final_df['checkin_since'].apply(extract_timestamp)
+        
         # Clean data
         self.final_df = self.data_processor.clean_final_data(self.final_df)
+        
+        # Add debug info for data structure compatibility
+        if not self.final_df.empty:
+            required_columns = ['goal_user_name', 'checkin_since', 'checkin_since_timestamp', 'checkin_kr_current_value', 'kr_id']
+            missing_columns = [col for col in required_columns if col not in self.final_df.columns]
+            if missing_columns:
+                print(f"⚠️ Missing columns for checkin.py compatibility: {missing_columns}")
+            else:
+                print(f"✅ All required columns present for checkin.py compatibility")
+        
         return self.final_df
 
     def analyze_missing_goals_and_checkins(self) -> Tuple[List[Dict], List[Dict], List[Dict]]:
@@ -2182,28 +2521,23 @@ class OKRAnalysisSystem:
 # ==================== UTILITY FUNCTIONS ====================
 
 def create_user_manager_with_monthly_calculation(analyzer):
-    """Create UserManager using EXACT data from Monthly OKR Analysis"""
+    """Create UserManager using EXACT data from Monthly OKR Analysis - Updated for checkin.py compatibility"""
     
     # Sử dụng CHÍNH XÁC dữ liệu từ Monthly OKR Analysis
     if 'monthly_okr_data' in st.session_state and st.session_state['monthly_okr_data']:
         monthly_okr_data = st.session_state['monthly_okr_data']
         monthly_user_names = [data['user_name'] for data in monthly_okr_data]
         
-
-        
-        # Tạo account_df CHỈ cho users có trong Monthly OKR Analysis
+        # Create account_df - MUST include ALL users from filtered_members_df for proper checkin calculation
         if analyzer.filtered_members_df is not None and not analyzer.filtered_members_df.empty:
-            # Lọc chỉ lấy users có trong monthly_okr_data
-            account_df = analyzer.filtered_members_df[
-                analyzer.filtered_members_df['name'].isin(monthly_user_names)
-            ].copy()
+            # Use ALL filtered members, not just monthly OKR users - this is needed for checkin.py logic
+            account_df = analyzer.filtered_members_df.copy()
             
-            # Nếu có users trong monthly_okr_data nhưng không có trong filtered_members_df, tạo record
+            # Add missing users from monthly_okr_data if any
             existing_names = set(account_df['name'].tolist())
             missing_names = set(monthly_user_names) - existing_names
             
             if missing_names:
-
                 missing_records = []
                 for name in missing_names:
                     missing_records.append({
@@ -2228,12 +2562,11 @@ def create_user_manager_with_monthly_calculation(analyzer):
                 })
             account_df = pd.DataFrame(account_records)
         
-
+        # Extract data using checkin.py compatible format
+        krs_df = _extract_krs_data_for_user_manager_checkin_style(analyzer)
+        checkin_df = _extract_checkin_data_for_user_manager_checkin_style(analyzer)
         
-        krs_df = _extract_krs_data_for_user_manager(analyzer)
-        checkin_df = _extract_checkin_data_for_user_manager(analyzer)
-        
-        # Truyền monthly_okr_data để set đúng dịch chuyển OKR
+        # UserManager needs final_df to work like checkins_df from checkin.py
         monthly_users_set = set(monthly_user_names)
         return UserManager(account_df, krs_df, checkin_df, analyzer.final_df, analyzer.final_df, monthly_users_set, monthly_okr_data)
     
@@ -2241,8 +2574,20 @@ def create_user_manager_with_monthly_calculation(analyzer):
         st.warning("⚠️ No Monthly OKR Analysis data found. Please run Monthly OKR Analysis first!")
         return UserManager(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), None, None, set(), [])
 
+def _extract_krs_data_for_user_manager_checkin_style(analyzer) -> pd.DataFrame:
+    """Extract KRs data for UserManager - checkin.py compatible format"""
+    # UserManager doesn't actually use this data for checkin calculation
+    # It uses final_df directly, so we can return minimal structure
+    return pd.DataFrame(columns=['user_id', 'kr_id', 'current_value'])
+
+def _extract_checkin_data_for_user_manager_checkin_style(analyzer) -> pd.DataFrame:
+    """Extract checkin data for UserManager - checkin.py compatible format"""
+    # UserManager doesn't actually use this data for checkin calculation with new logic
+    # It uses final_df directly like checkin.py, so we can return minimal structure
+    return pd.DataFrame(columns=['user_id', 'day', 'checkin_id'])
+
 def _extract_krs_data_for_user_manager(analyzer) -> pd.DataFrame:
-    """Extract KRs data for UserManager from final_df"""
+    """Extract KRs data for UserManager from final_df - DEPRECATED"""
     krs_data = []
     for _, row in analyzer.final_df.iterrows():
         if pd.notna(row.get('kr_id')):
@@ -2259,7 +2604,7 @@ def _extract_krs_data_for_user_manager(analyzer) -> pd.DataFrame:
     return pd.DataFrame(krs_data)
 
 def _extract_checkin_data_for_user_manager(analyzer) -> pd.DataFrame:
-    """Extract checkin data for UserManager from final_df"""
+    """Extract checkin data for UserManager from final_df - DEPRECATED"""
     checkin_data = []
     for _, row in analyzer.final_df.iterrows():
         if pd.notna(row.get('checkin_id')):
