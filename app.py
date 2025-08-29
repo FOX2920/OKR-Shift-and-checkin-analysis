@@ -18,6 +18,7 @@ from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 
 from email.mime.image import MIMEImage
 
@@ -1053,7 +1054,10 @@ class APIClient:
         """Apply filters to member dataframe"""
         excluded_jobs = 'kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường'
         filtered_df = df[~df['job'].str.lower().str.contains(excluded_jobs, na=False)]
-        return filtered_df[filtered_df['username'] != 'ThuAn']
+        # Loại bỏ các username không mong muốn
+        filtered_df = filtered_df[filtered_df['username'] != 'ThuAn']
+        filtered_df = filtered_df[filtered_df['username'] != 'HienNguyen']
+        return filtered_df
 
     def get_cycle_list(self) -> List[Dict]:
         """Get list of quarterly cycles sorted by most recent first"""
@@ -2013,7 +2017,7 @@ class EmailReportGenerator:
             return False, f"Lỗi gửi email: {str(e)}"
 
     def send_email_report_bulk(self, email_from: str, password: str, recipient_list: List[str], 
-                              subject: str, html_content: str) -> Tuple[bool, str, List[str]]:
+                              subject: str, html_content: str, excel_attachment: BytesIO = None) -> Tuple[bool, str, List[str]]:
         """Send email report to multiple recipients with optional Excel attachment"""
         success_count = 0
         failed_count = 0
@@ -2026,7 +2030,7 @@ class EmailReportGenerator:
                 
                 for email_to in recipient_list:
                     try:
-                        message = self._create_email_message(email_from, email_to, subject, html_content)
+                        message = self._create_email_message(email_from, email_to, subject, html_content, excel_attachment)
                         server.send_message(message)
                         success_count += 1
                         
@@ -2039,8 +2043,8 @@ class EmailReportGenerator:
         except Exception as e:
             return False, f"Server connection error: {str(e)}", errors
 
-    def _create_email_message(self, email_from: str, email_to: str, subject: str, html_content: str) -> MIMEMultipart:
-        """Create email message"""
+    def _create_email_message(self, email_from: str, email_to: str, subject: str, html_content: str, excel_attachment: BytesIO = None) -> MIMEMultipart:
+        """Create email message with optional Excel attachment"""
         message = MIMEMultipart('related')
         message['From'] = f"OKR System A Plus <{email_from}>"
         message['To'] = email_to
@@ -2050,6 +2054,21 @@ class EmailReportGenerator:
         message.attach(msg_alternative)
         html_part = MIMEText(html_content, 'html', 'utf-8')
         msg_alternative.attach(html_part)
+        
+        # Add Excel attachment if provided
+        if excel_attachment:
+            excel_attachment.seek(0)  # Reset buffer position
+            attachment = MIMEApplication(
+                excel_attachment.read(),
+                _subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+            attachment.add_header(
+                'Content-Disposition',
+                'attachment',
+                filename=f'okr_report_{current_time}.xlsx'
+            )
+            message.attach(attachment)
         
         return message
 
@@ -3640,7 +3659,31 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
             st.session_state['monthly_okr_count'] = len(monthly_okr_users)
 
         
-        # Skip Excel creation for emails
+        # Create Excel attachment if it's last week of month
+        excel_attachment = None
+        if DateUtils.is_last_week_of_month():
+            status_text.text("Creating Excel attachment for last week of month...")
+            progress_bar.progress(0.6)
+            
+            try:
+                # Create UserManager to get user scores for Excel export
+                user_manager = create_user_manager_with_monthly_calculation(analyzer)
+                if user_manager:
+                    user_manager.update_checkins()
+                    user_manager.update_okr_movement()
+                    user_manager.calculate_scores()
+                    
+                    users = user_manager.get_users()
+                    if users:
+                        wb = export_to_excel(users)
+                        excel_buffer = BytesIO()
+                        wb.save(excel_buffer)
+                        excel_buffer.seek(0)
+                        excel_attachment = excel_buffer
+                        st.info(f"📊 Excel attachment created with {len(users)} users (last week of month)")
+            except Exception as e:
+                st.warning(f"⚠️ Could not create Excel attachment: {e}")
+                excel_attachment = None
         
         # Create email content
         status_text.text("Creating email content...")
@@ -3658,14 +3701,17 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         subject = f"📊 Báo cáo tiến độ OKR & Checkin - {selected_cycle['name']} - {datetime.now().strftime('%d/%m/%Y')}"
         
         success, message, errors = email_generator.send_email_report_bulk(
-            email_from, email_password, recipients, subject, html_content
+            email_from, email_password, recipients, subject, html_content, excel_attachment
         )
         
         # Display results
         progress_bar.progress(1.0)
         if success:
             st.success(f"✅ {message}")
-            st.success(f"📧 Sent to {len(recipients)} recipients")
+            recipient_msg = f"📧 Sent to {len(recipients)} recipients"
+            if excel_attachment:
+                recipient_msg += " (với file Excel đính kèm)"
+            st.success(recipient_msg)
             
             if errors:
                 st.warning("⚠️ Some emails failed:")
