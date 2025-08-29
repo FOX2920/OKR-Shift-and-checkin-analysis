@@ -92,24 +92,55 @@ class DateUtils:
     
     @staticmethod
     def is_last_week_of_month() -> bool:
-        """Check if current week is the last week of the month"""
-        today = datetime.now()
+        """
+        Kiểm tra xem hiện tại có phải tuần cuối cùng của tháng không
+        Copy y nguyên logic từ checkin.py
+        """
+        now = datetime.now()
+        weeks = DateUtils._get_weeks_in_current_month()
         
-        # Tìm ngày cuối tháng
-        if today.month == 12:
-            next_month_first = datetime(today.year + 1, 1, 1)
-        else:
-            next_month_first = datetime(today.year, today.month + 1, 1)
+        if not weeks:
+            return False
         
-        last_day_of_month = next_month_first - timedelta(days=1)
+        last_week = weeks[-1]
+        return last_week['start_date'] <= now.date() <= last_week['end_date']
+    
+    @staticmethod
+    def _get_weeks_in_current_month():
+        """
+        Lấy tất cả các tuần trong tháng hiện tại - copy từ checkin.py
+        """
+        now = datetime.now()
+        year = now.year
+        month = now.month
         
-        # Tìm tuần hiện tại (Monday to Sunday)
-        days_since_monday = today.weekday()
-        monday_this_week = today - timedelta(days=days_since_monday)
-        sunday_this_week = monday_this_week + timedelta(days=6)
+        # Ngày đầu và cuối tháng
+        first_day = datetime(year, month, 1)
+        last_day = datetime(year, month, calendar.monthrange(year, month)[1])
         
-        # Kiểm tra xem tuần hiện tại có chứa ngày cuối tháng không
-        return monday_this_week <= last_day_of_month <= sunday_this_week
+        weeks = []
+        current_date = first_day
+        
+        while current_date <= last_day:
+            # Tìm ngày thứ 2 của tuần (hoặc ngày đầu tháng nếu tuần bắt đầu trước đó)
+            week_start = current_date - timedelta(days=current_date.weekday())
+            week_start = max(week_start, first_day)  # Không được trước ngày 1
+            
+            # Tìm ngày chủ nhật của tuần (hoặc ngày cuối tháng nếu tuần kết thúc sau đó)
+            week_end = week_start + timedelta(days=6)
+            week_end = min(week_end, last_day)  # Không được sau ngày cuối tháng
+            
+            weeks.append({
+                'week_number': len(weeks) + 1,
+                'start_date': week_start.date(),
+                'end_date': week_end.date(),
+                'week_range': f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m')}"
+            })
+            
+            # Chuyển sang tuần tiếp theo
+            current_date = week_end + timedelta(days=1)
+        
+        return weeks
 
 
 class User:
@@ -266,21 +297,31 @@ class UserManager:
                 'week_details': week_details
             }
         
-        # Đếm số tuần có check-in theo logic của checkin.py
+        # Xác định checkin thuộc tuần nào - sử dụng logic từ checkin.py
+        def get_week_number(checkin_date):
+            for week in month_weeks:
+                if week['start_date'] <= checkin_date <= week['end_date']:
+                    return week['week_number']
+            return None
+        
+        # Đếm số tuần có checkin
         weeks_with_checkins = set()
-        week_checkins = {i: [] for i in range(len(month_weeks))}
+        week_checkins = {}
         
         for checkin_date in checkins_this_month:
-            week_number = self._get_week_number_for_date(checkin_date, month_weeks)
+            week_number = get_week_number(checkin_date)
             if week_number is not None:
                 weeks_with_checkins.add(week_number)
+                if week_number not in week_checkins:
+                    week_checkins[week_number] = []
                 week_checkins[week_number].append(checkin_date.strftime("%d/%m"))
         
         # Tạo chi tiết cho từng tuần
         week_details = []
-        for i, week in enumerate(month_weeks):
-            has_checkin = i in weeks_with_checkins
-            checkin_dates = week_checkins.get(i, [])
+        for week in month_weeks:
+            week_number = week['week_number']
+            has_checkin = week_number in weeks_with_checkins
+            checkin_dates = week_checkins.get(week_number, [])
             
             week_details.append({
                 'week_range': week['week_range'],
@@ -301,10 +342,9 @@ class UserManager:
 
     def _get_weeks_in_current_month(self):
         """
-        Lấy tất cả các tuần trong tháng hiện tại theo logic checkin.py
+        Lấy tất cả các tuần trong tháng hiện tại
         Quy tắc: Nếu ngày đầu/cuối tháng rơi vào thứ 2-6, vẫn tính là tuần của tháng đó
         """
-        
         now = datetime.now()
         year = now.year
         month = now.month
@@ -317,16 +357,14 @@ class UserManager:
         current_date = first_day
         
         while current_date <= last_day:
-            # Tìm ngày thứ 2 của tuần chứa current_date
-            days_since_monday = current_date.weekday()
-            original_week_start = current_date - timedelta(days=days_since_monday)
-            original_week_end = original_week_start + timedelta(days=6)
+            # Tìm ngày thứ 2 của tuần (hoặc ngày đầu tháng nếu tuần bắt đầu trước đó)
+            week_start = current_date - timedelta(days=current_date.weekday())
+            week_start = max(week_start, first_day)  # Không được trước ngày 1
             
-            # Điều chỉnh để chỉ lấy phần trong tháng
-            week_start = max(original_week_start, first_day)
-            week_end = min(original_week_end, last_day)
+            # Tìm ngày chủ nhật của tuần (hoặc ngày cuối tháng nếu tuần kết thúc sau đó)
+            week_end = week_start + timedelta(days=6)
+            week_end = min(week_end, last_day)  # Không được sau ngày cuối tháng
             
-            # Thêm tuần vào danh sách
             weeks.append({
                 'week_number': len(weeks) + 1,
                 'start_date': week_start.date(),
@@ -334,16 +372,16 @@ class UserManager:
                 'week_range': f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m')}"
             })
             
-            # Chuyển sang tuần tiếp theo: bắt đầu từ ngày sau original_week_end
-            current_date = original_week_end + timedelta(days=1)
+            # Chuyển sang tuần tiếp theo
+            current_date = week_end + timedelta(days=1)
         
         return weeks
     
     def _get_week_number_for_date(self, checkin_date, month_weeks):
         """Xác định checkin_date thuộc tuần nào trong month_weeks"""
-        for i, week in enumerate(month_weeks):
+        for week in month_weeks:
             if week['start_date'] <= checkin_date <= week['end_date']:
-                return i
+                return week['week_number']
         return None
 
     def update_okr_movement(self):
@@ -3092,12 +3130,6 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
         else:
             current_month = datetime.now().month
             quarter_months = {1: "Q1", 4: "Q2", 7: "Q3", 10: "Q4"}
-
-        
-        # Real-time Check-in Preview (mới thêm)
-        st.subheader("📈 Preview Check-in")
-        with st.spinner("Loading real-time check-in preview..."):
-            show_realtime_checkin_preview(analyzer)
         
         # User Score Analysis (sau khi đã có Monthly OKR Analysis data)  
         st.subheader("🏆 Điểm số")
