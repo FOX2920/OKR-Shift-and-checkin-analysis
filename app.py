@@ -223,6 +223,11 @@ class UserManager:
 
     def _meets_monthly_weekly_criteria(self, user_id) -> bool:
         """Check if user has checkins in at least 3 weeks of current month"""
+        result = self._get_monthly_weekly_criteria_details(user_id)
+        return result['meets_criteria']
+    
+    def _get_monthly_weekly_criteria_details(self, user_id) -> dict:
+        """Get detailed information about monthly weekly criteria for a user"""
         # Tính ngày đầu và cuối tháng hiện tại
         today = datetime.now()
         current_month = today.month
@@ -238,17 +243,86 @@ class UserManager:
         checkins = self._get_user_checkins(user_id)
         checkins_this_month = [dt for dt in checkins if month_start <= dt <= month_end]
         
-        if not checkins_this_month:
-            return False
+        # Lấy tất cả tuần trong tháng
+        month_weeks = self._get_month_weeks(current_year, current_month)
+        total_weeks_in_month = len(month_weeks)
         
-        # Đếm số tuần có check-in trong tháng hiện tại
+        if not checkins_this_month:
+            return {
+                'meets_criteria': False,
+                'weeks_with_checkins': 0,
+                'total_weeks_in_month': total_weeks_in_month,
+                'checkins_count': 0,
+                'week_details': []
+            }
+        
+        # Đếm số tuần có check-in trong tháng hiện tại theo logic tùy chỉnh
         weeks_with_checkins = set()
+        week_details = []
+        
+        # Tạo dict để track check-in theo tuần
+        week_checkins = {}
         for checkin_date in checkins_this_month:
-            year, week, _ = checkin_date.isocalendar()
-            weeks_with_checkins.add((year, week))
+            checkin_week = self._get_week_of_date(checkin_date)
+            if checkin_week in month_weeks:
+                weeks_with_checkins.add(checkin_week)
+                if checkin_week not in week_checkins:
+                    week_checkins[checkin_week] = []
+                week_checkins[checkin_week].append(checkin_date.strftime("%d/%m"))
+        
+        # Tạo chi tiết cho từng tuần
+        for week in sorted(month_weeks):
+            monday_date = datetime(week[0], week[1], week[2])
+            sunday_date = monday_date + timedelta(days=6)
+            week_range = f"{monday_date.strftime('%d/%m')} - {sunday_date.strftime('%d/%m')}"
+            
+            has_checkin = week in weeks_with_checkins
+            checkin_dates = week_checkins.get(week, [])
+            
+            week_details.append({
+                'week_range': week_range,
+                'has_checkin': has_checkin,
+                'checkin_dates': checkin_dates
+            })
         
         # Cần ít nhất 3 tuần có check-in trong tháng hiện tại
-        return len(weeks_with_checkins) >= 3
+        meets_criteria = len(weeks_with_checkins) >= 3
+        
+        return {
+            'meets_criteria': meets_criteria,
+            'weeks_with_checkins': len(weeks_with_checkins),
+            'total_weeks_in_month': total_weeks_in_month,
+            'checkins_count': len(checkins_this_month),
+            'week_details': week_details
+        }
+
+    def _get_month_weeks(self, year: int, month: int) -> set:
+        """Get all weeks that belong to the specified month
+        Tuần thuộc về tháng nếu có ít nhất 1 ngày của tháng trong tuần đó"""
+        month_start = datetime(year, month, 1)
+        if month == 12:
+            month_end = datetime(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            month_end = datetime(year, month + 1, 1) - timedelta(days=1)
+        
+        weeks = set()
+        current_date = month_start
+        
+        # Duyệt từng ngày trong tháng và tìm tuần chứa ngày đó
+        while current_date <= month_end:
+            week_identifier = self._get_week_of_date(current_date)
+            weeks.add(week_identifier)
+            current_date += timedelta(days=1)
+        
+        return weeks
+    
+    def _get_week_of_date(self, date: datetime) -> tuple:
+        """Get week identifier for a date (year, week_start_monday)"""
+        # Tìm thứ 2 của tuần chứa ngày này
+        days_since_monday = date.weekday()
+        monday_of_week = date - timedelta(days=days_since_monday)
+        # Sử dụng ngày thứ 2 làm identifier cho tuần
+        return (monday_of_week.year, monday_of_week.month, monday_of_week.day)
 
     def update_okr_movement(self):
         """Update OKR movement for each user - ALWAYS use monthly calculation"""
@@ -434,16 +508,18 @@ class UserManager:
         is_last_week = DateUtils.is_last_week_of_month()
         
         # Collect debug info for last week of month
-        debug_info = {"pass": [], "fail": []}
+        debug_info = {"pass": [], "fail": [], "details": {}}
         
         for user in self.users.values():
             # Reset checkin status trước khi tính score
             if is_last_week:
                 # Chỉ khi ở tuần cuối cùng mới check 3 tuần criteria
-                meets_criteria = self._meets_monthly_weekly_criteria(user.user_id)
+                criteria_details = self._get_monthly_weekly_criteria_details(user.user_id)
+                meets_criteria = criteria_details['meets_criteria']
                 user.checkin = 1 if meets_criteria else 0
                 
-                # Collect debug info
+                # Collect detailed debug info
+                debug_info["details"][user.name] = criteria_details
                 if meets_criteria:
                     debug_info["pass"].append(user.name)
                 else:
@@ -457,10 +533,34 @@ class UserManager:
         # Display debug info in expander (only during last week)
         if is_last_week and (debug_info["pass"] or debug_info["fail"]):
             with st.expander(f"🔍 Chi tiết kiểm tra 3 tuần checkin ({len(debug_info['pass']) + len(debug_info['fail'])} người)"):
+                # Hiển thị tóm tắt
                 if debug_info["pass"]:
                     st.success(f"✅ **Đạt 3 tuần ({len(debug_info['pass'])} người)**: {', '.join(debug_info['pass'])}")
                 if debug_info["fail"]:
                     st.warning(f"⚠️ **Chưa đạt 3 tuần ({len(debug_info['fail'])} người)**: {', '.join(debug_info['fail'])}")
+                
+                # Hiển thị chi tiết cho một vài người đầu tiên
+                st.markdown("---")
+                st.markdown("### 📊 Chi tiết theo tuần (5 người đầu tiên)")
+                
+                sample_users = list(debug_info["details"].keys())[:5]
+                for user_name in sample_users:
+                    details = debug_info["details"][user_name]
+                    status_icon = "✅" if details['meets_criteria'] else "❌"
+                    
+                    st.markdown(f"**{status_icon} {user_name}**: {details['weeks_with_checkins']}/{details['total_weeks_in_month']} tuần có check-in ({details['checkins_count']} lần)")
+                    
+                    # Hiển thị chi tiết từng tuần
+                    week_status = []
+                    for week_detail in details['week_details']:
+                        if week_detail['has_checkin']:
+                            dates_str = ', '.join(week_detail['checkin_dates'])
+                            week_status.append(f"🟢 {week_detail['week_range']} ({dates_str})")
+                        else:
+                            week_status.append(f"⚪ {week_detail['week_range']}")
+                    
+                    st.markdown(f"   • {' | '.join(week_status)}")
+                    st.markdown("")
 
     def get_users(self) -> List[User]:
         """Return list of all users"""
