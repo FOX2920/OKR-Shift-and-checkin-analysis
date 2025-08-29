@@ -3140,11 +3140,6 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
             quarter_months = {1: "Q1", 4: "Q2", 7: "Q3", 10: "Q4"}
 
         
-        # Real-time Check-in Preview (mới thêm)
-        st.subheader("📈 Preview Check-in")
-        with st.spinner("Loading real-time check-in preview..."):
-            show_realtime_checkin_preview(analyzer)
-        
         # User Score Analysis (sau khi đã có Monthly OKR Analysis data)  
         st.subheader("🏆 Điểm số")
         with st.spinner("Calculating user scores with monthly OKR movement..."):
