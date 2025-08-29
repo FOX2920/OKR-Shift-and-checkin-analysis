@@ -372,18 +372,31 @@ class UserManager:
         week_details = []
         week_checkins_map = {}
         
-        # Group checkins by week
+        # Group checkins by week and count occurrences per date
         for _, row in current_month_checkins.iterrows():
             week_num = row['week_number']
             if pd.notna(week_num):
                 if week_num not in week_checkins_map:
-                    week_checkins_map[week_num] = []
-                week_checkins_map[week_num].append(row['checkin_date'].strftime('%d/%m'))
+                    week_checkins_map[week_num] = {}
+                date_str = row['checkin_date'].strftime('%d/%m')
+                if date_str not in week_checkins_map[week_num]:
+                    week_checkins_map[week_num][date_str] = 0
+                week_checkins_map[week_num][date_str] += 1
         
         for week in current_month_weeks:
             week_number = week['week_number']
             has_checkin = week_number in week_checkins_map
-            checkin_dates = week_checkins_map.get(week_number, [])
+            
+            # Format checkin dates as "DD/MM-X lần"
+            checkin_dates = []
+            if has_checkin:
+                for date_str, count in sorted(week_checkins_map[week_number].items()):
+                    if count == 1:
+                        checkin_dates.append(date_str)
+                    else:
+                        checkin_dates.append(f"{date_str}-{count} lần")
+            else:
+                checkin_dates = []
             
             week_details.append({
                 'week_range': week['week_range'],
