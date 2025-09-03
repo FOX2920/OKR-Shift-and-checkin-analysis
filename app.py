@@ -2978,11 +2978,6 @@ def show_user_score_analysis(analyzer):
                 _display_score_export_options(scores_df, users)
             else:
                 st.warning("⏳ **Chưa phải tuần cuối tháng** - Score tables sẽ hiển thị với điểm checkin thực tế vào tuần cuối cùng")
-                # Vẫn hiển thị score tables nhưng với thông báo
-                st.info("💡 **Bảng điểm hiện tại** (chưa tính điểm checkin 3 tuần):")
-                _display_score_tables(scores_df)
-                _display_score_export_options(scores_df, users)
-            
             return scores_df
         else:
             return pd.DataFrame()
