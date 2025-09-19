@@ -121,8 +121,7 @@ class DateUtils:
             if week['start_date'] <= now.date() <= week['end_date']:
                 current_week_number = week['week_number']
                 break
-    
-    return current_week_number is not None and current_week_number >= 4    
+        return current_week_number is not None and current_week_number >= 4    
     @staticmethod
     def _get_weeks_in_current_month():
         """
