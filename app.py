@@ -105,7 +105,24 @@ class DateUtils:
         
         last_week = weeks[-1]
         return last_week['start_date'] <= now.date() <= last_week['end_date']
+        
+    @staticmethod
+    def is_week_4_or_later() -> bool:
+        """Check if current week is week 4 or later in the month"""
+        now = datetime.now()
+        weeks = DateUtils._get_weeks_in_current_month()
+        
+        if not weeks or len(weeks) < 4:
+            return False
+        
+        # Find current week number
+        current_week_number = None
+        for week in weeks:
+            if week['start_date'] <= now.date() <= week['end_date']:
+                current_week_number = week['week_number']
+                break
     
+    return current_week_number is not None and current_week_number >= 4    
     @staticmethod
     def _get_weeks_in_current_month():
         """
@@ -528,6 +545,23 @@ class UserManager:
                 # Không có trong Monthly OKR Analysis => không có OKR movement
                 user.dich_chuyen_OKR = 0
 
+    def _is_week_4_or_later(self):
+        """Check if current week is week 4 or later in the month"""
+        now = datetime.now()
+        weeks = self._get_weeks_in_current_month_from_checkin_py()
+        
+        if not weeks or len(weeks) < 4:
+            return False
+        
+        # Find current week number
+        current_week_number = None
+        for week in weeks:
+            if week['start_date'] <= now.date() <= week['end_date']:
+                current_week_number = week['week_number']
+                break
+        
+        return current_week_number is not None and current_week_number >= 4
+    
     def _calculate_current_value_for_user(self, user_id) -> float:
         """Calculate current OKR value for a specific user"""
         try:
@@ -678,16 +712,16 @@ class UserManager:
 
     def calculate_scores(self):
         """Calculate scores for all users with 3-week checkin criteria"""
-        # Chỉ tính checkin score khi ở tuần cuối cùng của tháng
-        is_last_week = DateUtils.is_last_week_of_month()
+        # Chỉ tính checkin score khi ở tuần thứ 4 trở đi
+        is_week_4_or_later = self._is_week_4_or_later()
         
-        # Collect debug info for last week of month
+        # Collect debug info for week 4 or later
         debug_info = {"pass": [], "fail": [], "details": {}}
         
         for user in self.users.values():
             # Reset checkin status trước khi tính score
-            if is_last_week:
-                # Chỉ khi ở tuần cuối cùng mới check 3 tuần criteria
+            if is_week_4_or_later:
+                # Chỉ khi ở tuần thứ 4 trở đi mới check 3 tuần criteria
                 criteria_details = self._get_monthly_weekly_criteria_details(user.user_id)
                 meets_criteria = criteria_details['meets_criteria']
                 user.checkin = 1 if meets_criteria else 0
@@ -704,8 +738,8 @@ class UserManager:
             
             user.calculate_score()
         
-        # Display debug info in expander (only during last week)
-        if is_last_week and (debug_info["pass"] or debug_info["fail"]):
+        # Display debug info in expander (only during week 4 or later)
+        if is_week_4_or_later and (debug_info["pass"] or debug_info["fail"]):
             with st.expander(f"🔍 Chi tiết kiểm tra 3 tuần checkin ({len(debug_info['pass']) + len(debug_info['fail'])} người)"):
                 # Hiển thị tóm tắt
                 if debug_info["pass"]:
@@ -838,8 +872,8 @@ class UserManager:
         """
         
         # Kiểm tra có phải tuần cuối cùng của tháng không
-        if not self._is_last_week_of_month():
-            print("⚠️  Chỉ hiển thị điểm checkin vào tuần cuối cùng của tháng")
+        if not self._is_week_4_or_later():
+            print("⚠️  Chỉ hiển thị điểm checkin từ tuần thứ 4 trở đi")
             return None
         
         # Lấy thông tin các tuần trong tháng hiện tại
@@ -2968,16 +3002,16 @@ def show_user_score_analysis(analyzer):
             st.markdown("""
             - 📅 **Điều kiện**: Nhân viên có ít nhất **3 tuần check-in** trong tháng hiện tại
             - 🎯 **Điểm số**: Đủ 3 tuần → **+0.5 điểm**, không đủ → **+0 điểm**
-            - ⏰ **Thời điểm hiển thị**: Chỉ vào **tuần cuối cùng của tháng**
+            - ⏰ **Thời điểm hiển thị**: Chỉ từ **tuần thứ 4 trở đi**
             """)
             
-            # Chỉ hiển thị score tables khi ở tuần cuối cùng của tháng
-            if DateUtils.is_last_week_of_month():
-                st.success("✅ **Đang ở tuần cuối cùng của tháng** - Hiển thị điểm checkin dựa trên tiêu chí 3 tuần")
+            # Chỉ hiển thị score tables khi ở tuần thứ 4 trở đi
+            if DateUtils.is_week_4_or_later():
+                st.success("✅ **Đang ở tuần thứ 4 trở đi** - Hiển thị điểm checkin dựa trên tiêu chí 3 tuần")
                 _display_score_tables(scores_df)
                 _display_score_export_options(scores_df, users)
             else:
-                st.warning("⏳ **Chưa phải tuần cuối tháng** - Score tables sẽ hiển thị với điểm checkin thực tế vào tuần cuối cùng")
+                st.warning("⏳ **Chưa đến tuần thứ 4** - Score tables sẽ hiển thị với điểm checkin thực tế từ tuần thứ 4 trở đi")
             return scores_df
         else:
             return pd.DataFrame()
@@ -3656,8 +3690,8 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
         
         # Create Excel attachment if it's last week of month
         excel_attachment = None
-        if DateUtils.is_last_week_of_month():
-            status_text.text("Creating Excel attachment for last week of month...")
+        if DateUtils.is_week_4_or_later():
+            status_text.text("Creating Excel attachment for week 4 or later...")
             progress_bar.progress(0.6)
             
             try:
@@ -3675,7 +3709,7 @@ def send_email_report_enhanced(analyzer, email_generator: EmailReportGenerator, 
                         wb.save(excel_buffer)
                         excel_buffer.seek(0)
                         excel_attachment = excel_buffer
-                        st.info(f"📊 Excel attachment created with {len(users)} users (last week of month)")
+                        st.info(f"📊 Excel attachment created with {len(users)} users (week 4 or later)")
             except Exception as e:
                 st.warning(f"⚠️ Could not create Excel attachment: {e}")
                 excel_attachment = None
