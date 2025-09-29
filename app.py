@@ -405,8 +405,8 @@ class UserManager:
                 'checkin_dates': checkin_dates
             })
         
-        # Check if meets criteria (>= 3 weeks) - exact logic from checkin.py
-        meets_criteria = weeks_with_checkins >= 3
+        # Check if meets criteria (>= 2 weeks) - exact logic from checkin.py
+        meets_criteria = weeks_with_checkins >= 2
         
         return {
             'meets_criteria': meets_criteria,
@@ -677,7 +677,7 @@ class UserManager:
             return 0
 
     def calculate_scores(self):
-        """Calculate scores for all users with 3-week checkin criteria"""
+        """Calculate scores for all users with 2-week checkin criteria"""
         # Chỉ tính checkin score khi ở tuần cuối cùng của tháng
         is_last_week = DateUtils.is_last_week_of_month()
         
@@ -766,7 +766,7 @@ class UserManager:
                 status_color = "error"
             
             # Tính phần trăm hoàn thành
-            completion_rate = (weeks_count / 3) * 100 if weeks_count <= 3 else 100
+            completion_rate = (weeks_count / 2) * 100 if weeks_count <= 2 else 100
             
             preview_data.append({
                 'Tên': user.name,
@@ -795,8 +795,8 @@ class UserManager:
             criteria_details = self._get_monthly_weekly_criteria_details(user.user_id)
             weeks_count = criteria_details['weeks_with_checkins']
             
-            if weeks_count < 3:
-                weeks_needed = 3 - weeks_count
+            if weeks_count < 2:
+                weeks_needed = 2 - weeks_count
                 
                 # Xác định mức độ khẩn cấp
                 if days_left_in_month <= 7:
