@@ -444,8 +444,8 @@ class UserManager:
                 'checkin_dates': checkin_dates
             })
         
-        # Check if meets criteria (>= 2 weeks) - exact logic from checkin.py
-        meets_criteria = weeks_with_checkins >= 2
+        # Check if meets criteria (>= 2 weeks OR total_checkins > 5)
+        meets_criteria = weeks_with_checkins >= 2 or total_checkins > 5
         
         return {
             'meets_criteria': meets_criteria,
@@ -716,7 +716,7 @@ class UserManager:
             return 0
 
     def calculate_scores(self):
-        """Calculate scores for all users with 2-week checkin criteria"""
+        """Calculate scores for all users with checkin criteria (≥2 weeks OR >5 checkins)"""
         # Chỉ tính checkin score khi ở tuần cuối cùng của tháng
         is_last_week = DateUtils.is_last_week_of_month()
         
@@ -745,12 +745,19 @@ class UserManager:
         
         # Display debug info in expander (only during last week)
         if is_last_week and (debug_info["pass"] or debug_info["fail"]):
-            with st.expander(f"🔍 Chi tiết kiểm tra 2 tuần checkin ({len(debug_info['pass']) + len(debug_info['fail'])} người)"):
+            with st.expander(f"🔍 Chi tiết kiểm tra điều kiện checkin ({len(debug_info['pass']) + len(debug_info['fail'])} người)"):
                 # Hiển thị tóm tắt
                 if debug_info["pass"]:
-                    st.success(f"✅ **Đạt 2 tuần ({len(debug_info['pass'])} người)**: {', '.join(debug_info['pass'])}")
+                    pass_users_info = []
+                    for user_name in debug_info["pass"]:
+                        details = debug_info["details"][user_name]
+                        if details['checkins_count'] > 5:
+                            pass_users_info.append(f"{user_name} (>5 checkin)")
+                        else:
+                            pass_users_info.append(f"{user_name} (≥2 tuần)")
+                    st.success(f"✅ **Đạt điều kiện ({len(debug_info['pass'])} người)**: {', '.join(pass_users_info)}")
                 if debug_info["fail"]:
-                    st.warning(f"⚠️ **Chưa đạt 2 tuần ({len(debug_info['fail'])} người)**: {', '.join(debug_info['fail'])}")
+                    st.warning(f"⚠️ **Chưa đạt điều kiện ({len(debug_info['fail'])} người)**: {', '.join(debug_info['fail'])}")
                 
                 # Hiển thị chi tiết cho một vài người đầu tiên
                 st.markdown("---")
@@ -761,7 +768,15 @@ class UserManager:
                     details = debug_info["details"][user_name]
                     status_icon = "✅" if details['meets_criteria'] else "❌"
                     
-                    st.markdown(f"**{status_icon} {user_name}**: {details['weeks_with_checkins']}/{details['total_weeks_in_month']} tuần có check-in ({details['checkins_count']} lần)")
+                    # Xác định lý do đạt/không đạt
+                    reason = ""
+                    if details['meets_criteria']:
+                        if details['checkins_count'] > 5:
+                            reason = f" (Đạt do >5 checkin)"
+                        elif details['weeks_with_checkins'] >= 2:
+                            reason = f" (Đạt do ≥2 tuần)"
+                    
+                    st.markdown(f"**{status_icon} {user_name}**: {details['weeks_with_checkins']}/{details['total_weeks_in_month']} tuần có check-in ({details['checkins_count']} lần){reason}")
                     
                     # Hiển thị chi tiết từng tuần
                     week_status = []
@@ -789,13 +804,22 @@ class UserManager:
             total_weeks = criteria_details['total_weeks_in_month']
             checkins_count = criteria_details['checkins_count']
             
-            # Tính điểm preview dựa trên tiêu chí 2 tuần - exact logic from checkin.py
-            projected_score = 0.5 if weeks_count >= 2 else 0
-            weeks_needed = max(0, 2 - weeks_count)
+            # Tính điểm preview dựa trên tiêu chí 2 tuần HOẶC tổng checkin > 5
+            meets_criteria = criteria_details['meets_criteria']
+            projected_score = 0.5 if meets_criteria else 0
+            
+            # Xác định cần bao nhiêu tuần hoặc checkin
+            if meets_criteria:
+                weeks_needed = 0
+            else:
+                weeks_needed = max(0, 2 - weeks_count)
             
             # Xác định status
-            if weeks_count >= 2:
-                status = "✅ Đạt tiêu chí"
+            if meets_criteria:
+                if checkins_count > 5:
+                    status = "✅ Đạt tiêu chí (>5 checkin)"
+                else:
+                    status = "✅ Đạt tiêu chí (≥2 tuần)"
                 status_color = "success"
             elif weeks_needed == 1:
                 status = "⚠️ Cần 1 tuần nữa"
@@ -833,9 +857,13 @@ class UserManager:
         for user in self.users.values():
             criteria_details = self._get_monthly_weekly_criteria_details(user.user_id)
             weeks_count = criteria_details['weeks_with_checkins']
+            checkins_count = criteria_details['checkins_count']
+            meets_criteria = criteria_details['meets_criteria']
             
-            if weeks_count < 2:
+            # Chỉ cảnh báo nếu chưa đạt cả 2 tiêu chí
+            if not meets_criteria:
                 weeks_needed = 2 - weeks_count
+                checkins_needed = max(0, 6 - checkins_count)
                 
                 # Xác định mức độ khẩn cấp
                 if days_left_in_month <= 7:
@@ -845,8 +873,16 @@ class UserManager:
                     urgency = "🟡 CẦN CHÚ Ý"
                     urgency_level = 2
                 else:
-                    urgency = "🟢 BÌN HỒ"
+                    urgency = "🟢 BÌNH THƯỜNG"
                     urgency_level = 1
+                
+                # Tạo message phù hợp
+                if weeks_needed > 0 and checkins_needed > 0:
+                    message = f"Cần check-in thêm {weeks_needed} tuần HOẶC {checkins_needed} lần nữa để đạt 0.5 điểm"
+                elif weeks_needed > 0:
+                    message = f"Cần check-in thêm {weeks_needed} tuần để đạt 0.5 điểm"
+                else:
+                    message = f"Cần check-in thêm {checkins_needed} lần để đạt 0.5 điểm"
                 
                 alerts.append({
                     'user_name': user.name,
@@ -855,8 +891,10 @@ class UserManager:
                     'urgency_level': urgency_level,
                     'weeks_current': weeks_count,
                     'weeks_needed': weeks_needed,
+                    'checkins_current': checkins_count,
+                    'checkins_needed': checkins_needed,
                     'days_left': days_left_in_month,
-                    'message': f"Cần check-in thêm {weeks_needed} tuần để đạt 0.5 điểm",
+                    'message': message,
                     'details': criteria_details
                 })
         
@@ -867,12 +905,11 @@ class UserManager:
 
     def calculate_weekly_checkin_scores(self):
         """
-        Exact copy of calculate_weekly_checkin_scores from checkin.py
         Tính điểm checkin theo tuần cho tháng hiện tại
         
         Điều kiện:
-        - Có ít nhất 2 tuần check-in trong tháng hiện tại → +0.5 điểm
-        - Không đủ 2 tuần → +0 điểm
+        - Có ít nhất 2 tuần check-in trong tháng hiện tại HOẶC tổng số checkin > 5 → +0.5 điểm
+        - Không đủ điều kiện trên → +0 điểm
         - Chỉ hiển thị vào tuần cuối cùng của tháng
         """
         
@@ -925,9 +962,15 @@ class UserManager:
         user_weekly_checkins = current_month_checkins.groupby(['goal_user_name', 'week_number']).size().reset_index(name='checkins_count')
         user_weeks_with_checkins = user_weekly_checkins.groupby('goal_user_name')['week_number'].nunique().reset_index(name='weeks_with_checkins')
         
-        # Tính điểm
-        user_weeks_with_checkins['score'] = user_weeks_with_checkins['weeks_with_checkins'].apply(
-            lambda x: 0.5 if x >= 2 else 0.0
+        # Tính tổng số checkin cho mỗi user
+        user_total_checkins = current_month_checkins.groupby('goal_user_name').size().reset_index(name='total_checkins')
+        user_weeks_with_checkins = user_weeks_with_checkins.merge(user_total_checkins, on='goal_user_name', how='left')
+        user_weeks_with_checkins['total_checkins'] = user_weeks_with_checkins['total_checkins'].fillna(0)
+        
+        # Tính điểm dựa trên >= 2 tuần HOẶC > 5 checkins
+        user_weeks_with_checkins['score'] = user_weeks_with_checkins.apply(
+            lambda row: 0.5 if (row['weeks_with_checkins'] >= 2 or row['total_checkins'] > 5) else 0.0,
+            axis=1
         )
         
         # Thêm thông tin chi tiết
@@ -935,12 +978,21 @@ class UserManager:
         for _, user_row in user_weeks_with_checkins.iterrows():
             user_name = user_row['goal_user_name']
             weeks_with_checkins = user_row['weeks_with_checkins']
+            total_checkins = int(user_row['total_checkins'])
             score = user_row['score']
             
             # Lấy thông tin chi tiết các tuần
             user_week_details = user_weekly_checkins[user_weekly_checkins['goal_user_name'] == user_name]
             weeks_list = sorted(user_week_details['week_number'].tolist())
-            total_checkins = user_week_details['checkins_count'].sum()
+            
+            # Xác định status dựa trên điều kiện
+            if score > 0:
+                if total_checkins > 5:
+                    status = 'ĐẠT (>5 checkin)'
+                else:
+                    status = 'ĐẠT (≥2 tuần)'
+            else:
+                status = 'KHÔNG ĐẠT'
             
             user_stats.append({
                 'user_name': user_name,
@@ -949,7 +1001,7 @@ class UserManager:
                 'weeks_list': weeks_list,
                 'weeks_detail': ', '.join([f"T{w}" for w in weeks_list]),
                 'score': score,
-                'status': 'ĐẠT' if score > 0 else 'KHÔNG ĐẠT'
+                'status': status
             })
         
         result_df = pd.DataFrame(user_stats)
@@ -2979,8 +3031,9 @@ def show_realtime_checkin_preview(analyzer):
         ### ℹ️ Giải thích
         - **Điểm dự kiến**: Điểm check-in sẽ nhận được nếu duy trì hiện trạng đến cuối tháng
         - **Tuần có check-in**: Số tuần đã có ít nhất 1 lần check-in / Tổng số tuần trong tháng  
-        - **Cần thêm**: Số tuần check-in cần bổ sung để đạt 0.5 điểm
-        - **Cảnh báo**: Dựa trên số ngày còn lại trong tháng và tuần cần bổ sung
+        - **Cần thêm**: Số tuần check-in cần bổ sung để đạt 0.5 điểm (hoặc đạt >5 checkin)
+        - **Điều kiện đạt điểm**: Có ≥2 tuần check-in HOẶC tổng số checkin > 5
+        - **Cảnh báo**: Dựa trên số ngày còn lại trong tháng và tuần/checkin cần bổ sung
         """)
         
         return preview_df
@@ -3014,14 +3067,14 @@ def show_user_score_analysis(analyzer):
             # Thông báo logic tính điểm checkin
             st.markdown("### 📋 Logic tính điểm Checkin:")
             st.markdown("""
-            - 📅 **Điều kiện**: Nhân viên có ít nhất **2 tuần check-in** trong tháng hiện tại
-            - 🎯 **Điểm số**: Đủ 2 tuần → **+0.5 điểm**, không đủ → **+0 điểm**
+            - 📅 **Điều kiện**: Nhân viên có ít nhất **2 tuần check-in** trong tháng hiện tại **HOẶC tổng số checkin > 5**
+            - 🎯 **Điểm số**: Đủ điều kiện → **+0.5 điểm**, không đủ → **+0 điểm**
             - ⏰ **Thời điểm hiển thị**: Chỉ vào **tuần cuối cùng của tháng**
             """)
             
             # Chỉ hiển thị score tables khi ở tuần cuối cùng của tháng
             if DateUtils.is_last_week_of_month():
-                st.success("✅ **Đang ở tuần cuối cùng của tháng** - Hiển thị điểm checkin dựa trên tiêu chí 2 tuần")
+                st.success("✅ **Đang ở tuần cuối cùng của tháng** - Hiển thị điểm checkin dựa trên tiêu chí ≥2 tuần HOẶC >5 checkin")
                 _display_score_tables(scores_df)
                 _display_score_export_options(scores_df, users)
             else:
