@@ -88,8 +88,19 @@ class DateUtils:
 
     @staticmethod
     def should_calculate_monthly_shift() -> bool:
-        """Check if monthly shift should be calculated (not in months 1,4,7,10)"""
-        return datetime.now().month not in QUARTER_START_MONTHS
+        """
+        Check if monthly shift should be calculated
+        - Không phải tháng đầu quý (1,4,7,10) HOẶC
+        - Là tuần 4 hoặc 5 của tháng đầu quý
+        """
+        current_month = datetime.now().month
+        
+        # Nếu không phải tháng đầu quý thì tính bình thường
+        if current_month not in QUARTER_START_MONTHS:
+            return True
+        
+        # Nếu là tháng đầu quý, chỉ tính khi là tuần 4 hoặc 5
+        return DateUtils.is_week_4_or_5_of_quarter_start_month()
     
     @staticmethod
     def is_last_week_of_month() -> bool:
@@ -105,6 +116,34 @@ class DateUtils:
         
         last_week = weeks[-1]
         return last_week['start_date'] <= now.date() <= last_week['end_date']
+    
+    @staticmethod
+    def is_week_4_or_5_of_quarter_start_month() -> bool:
+        """
+        Kiểm tra xem hiện tại có phải tuần 4 hoặc 5 của tháng đầu quý không
+        """
+        now = datetime.now()
+        current_month = now.month
+        
+        # Kiểm tra xem có phải tháng đầu quý không (1, 4, 7, 10)
+        if current_month not in QUARTER_START_MONTHS:
+            return False
+        
+        # Lấy danh sách các tuần trong tháng hiện tại
+        weeks = DateUtils._get_weeks_in_current_month()
+        
+        if not weeks:
+            return False
+        
+        # Tìm tuần hiện tại
+        current_week_number = None
+        for week in weeks:
+            if week['start_date'] <= now.date() <= week['end_date']:
+                current_week_number = week['week_number']
+                break
+        
+        # Kiểm tra xem có phải tuần 4 hoặc 5 không
+        return current_week_number in [4, 5]
     
     @staticmethod
     def _get_weeks_in_current_month():
@@ -2361,27 +2400,36 @@ class OKRAnalysisSystem:
         current_value = self.okr_calculator.calculate_current_value(user_df)
         reference_value, kr_details = self.okr_calculator.calculate_reference_value(reference_month_end, user_df)
         
-        # Áp dụng logic mới theo yêu cầu:
-        # 1. Nếu giá trị cuối tháng trước > giá trị hiện tại thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
-        # 2. Nếu giá trị cuối tháng trước < giá trị hiện tại và (giá trị hiện tại - giá trị cuối tháng trước) != dịch chuyển
-        #    thì dịch chuyển tháng = giá trị hiện tại - giá trị cuối tháng trước
-        
-        adjusted_reference_value = reference_value
-        adjusted_okr_shift = final_okr_goal_shift_monthly
-        reference_adjustment_applied = False
-        shift_adjustment_applied = False
-        
-        # Quy tắc 1: Nếu reference_value > current_value
-        if reference_value > current_value:
-            adjusted_reference_value = current_value - final_okr_goal_shift_monthly
+        # Kiểm tra xem có phải tuần 4 hoặc 5 của tháng đầu quý không
+        # Nếu đúng thì tính chuyển động tháng = điểm số hiện tại so với 0
+        if DateUtils.is_week_4_or_5_of_quarter_start_month():
+            adjusted_okr_shift = current_value  # current_value - 0
+            adjusted_reference_value = 0
             reference_adjustment_applied = True
-        
-        # Quy tắc 2: Nếu reference_value < current_value VÀ (current_value - reference_value) != shift
-        elif reference_value < current_value and (current_value - reference_value) != final_okr_goal_shift_monthly:
-            adjusted_okr_shift = current_value - reference_value
             shift_adjustment_applied = True
-        
-        legacy_okr_shift = current_value - reference_value
+            legacy_okr_shift = current_value
+        else:
+            # Áp dụng logic mới theo yêu cầu:
+            # 1. Nếu giá trị cuối tháng trước > giá trị hiện tại thì giá trị cuối tháng = giá trị hiện tại - dịch chuyển tháng
+            # 2. Nếu giá trị cuối tháng trước < giá trị hiện tại và (giá trị hiện tại - giá trị cuối tháng trước) != dịch chuyển
+            #    thì dịch chuyển tháng = giá trị hiện tại - giá trị cuối tháng trước
+            
+            adjusted_reference_value = reference_value
+            adjusted_okr_shift = final_okr_goal_shift_monthly
+            reference_adjustment_applied = False
+            shift_adjustment_applied = False
+            
+            # Quy tắc 1: Nếu reference_value > current_value
+            if reference_value > current_value:
+                adjusted_reference_value = current_value - final_okr_goal_shift_monthly
+                reference_adjustment_applied = True
+            
+            # Quy tắc 2: Nếu reference_value < current_value VÀ (current_value - reference_value) != shift
+            elif reference_value < current_value and (current_value - reference_value) != final_okr_goal_shift_monthly:
+                adjusted_okr_shift = current_value - reference_value
+                shift_adjustment_applied = True
+            
+            legacy_okr_shift = current_value - reference_value
 
         return {
             'user_name': user_name,
