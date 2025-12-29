@@ -1454,45 +1454,47 @@ class OKRCalculator:
 
     @staticmethod
     def calculate_kr_shift(row: pd.Series, reference_date: datetime, final_df: pd.DataFrame) -> float:
-        """Calculate kr_shift = kr_current_value - reference_date_checkin_value"""
+        """Calculate shift for a single KR"""
         try:
-            kr_current_value = pd.to_numeric(row.get('kr_current_value', 0), errors='coerce')
-            kr_current_value = kr_current_value if not pd.isna(kr_current_value) else 0
-            
-            kr_id = row.get('kr_id', '')
+            # Lấy thông tin KR
+            kr_id = row['kr_id']
+            current_val = pd.to_numeric(row.get('kr_current_value'), errors='coerce')
+            current_val = current_val if not pd.isna(current_val) else 0.0
+
             if not kr_id:
-                return kr_current_value
-            
+                return current_val
+
             quarter_start = DateUtils.get_quarter_start_date()
+
+            # Lấy lịch sử checkin từ final_df của toàn hệ thống
+            # Cần lọc đúng KR đang xét
+            kr_history = final_df[final_df['kr_id'] == kr_id].copy()
+            if kr_history.empty:
+                 return current_val
+
+            kr_history['checkin_since_dt'] = pd.to_datetime(kr_history['checkin_since'], errors='coerce')
+
+            # Lọc checkin trước ngày mốc VÀ sau đầu quý
+            valid_checkins = kr_history[
+                (kr_history['checkin_since_dt'] <= reference_date) & 
+                (kr_history['checkin_since_dt'] >= quarter_start) &
+                (kr_history['checkin_name'].notna()) & 
+                (kr_history['checkin_name'] != '')
+            ]
+
+            reference_val = 0.0
+            if not valid_checkins.empty:
+                # Lấy checkin mới nhất trước mốc thời gian
+                latest_checkin = valid_checkins.sort_values('checkin_since_dt').iloc[-1]
+                val = pd.to_numeric(latest_checkin.get('checkin_kr_current_value'), errors='coerce')
+                reference_val = val if not pd.isna(val) else 0.0
             
-            kr_checkins = final_df[
-                (final_df['kr_id'] == kr_id) & 
-                (final_df['checkin_id'].notna()) &
-                (final_df['checkin_name'].notna()) &
-                (final_df['checkin_name'] != '')
-            ].copy()
-            
-            if not kr_checkins.empty:
-                kr_checkins['checkin_since_dt'] = pd.to_datetime(kr_checkins['checkin_since'], errors='coerce')
-                kr_checkins = kr_checkins[
-                    (kr_checkins['checkin_since_dt'] >= quarter_start) &
-                    (kr_checkins['checkin_since_dt'] <= reference_date)
-                ]
-                
-                if not kr_checkins.empty:
-                    latest_checkin = kr_checkins.loc[kr_checkins['checkin_since_dt'].idxmax()]
-                    reference_checkin_value = pd.to_numeric(latest_checkin.get('checkin_kr_current_value', 0), errors='coerce')
-                    reference_checkin_value = reference_checkin_value if not pd.isna(reference_checkin_value) else 0
-                else:
-                    reference_checkin_value = 0
-            else:
-                reference_checkin_value = 0
-            
-            return kr_current_value - reference_checkin_value
-            
+            # Shift = Giá trị hiện tại - Giá trị tại mốc
+            return current_val - reference_val
+
         except Exception as e:
-            st.warning(f"Error calculating kr_shift: {e}")
-            return 0
+            # st.warning(f"Error calculating kr_shift: {e}")
+            return 0.0
 
 
 class EmailReportGenerator:
