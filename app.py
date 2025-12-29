@@ -1125,7 +1125,7 @@ class APIClient:
     def get_filtered_members(self) -> pd.DataFrame:
         """Get filtered members from account API"""
         url = "https://account.base.vn/extapi/v1/group/get"
-        data = {"access_token": self.account_token, "path": "aplus"}
+        data = {"access_token": self.account_token, "path": "nvvanphong"}
         
         response = self._make_request(url, data, "fetching account members")
         response_data = response.json()
@@ -1147,10 +1147,7 @@ class APIClient:
 
     def _apply_member_filters(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply filters to member dataframe"""
-        excluded_jobs = 'kcs|agile|khu vực|sa ti co|trainer|specialist|no|chuyên gia|xnk|vat|trưởng phòng thị trường'
-        filtered_df = df[~df['job'].str.lower().str.contains(excluded_jobs, na=False)]
-        # Loại bỏ các username không mong muốn
-        filtered_df = filtered_df[filtered_df['username'] != 'ThuAn']
+        filtered_df = df
         filtered_df = filtered_df[filtered_df['username'] != 'HienNguyen']
         return filtered_df
 
