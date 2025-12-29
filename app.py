@@ -1447,8 +1447,16 @@ class OKRCalculator:
                         'source': f'no_checkin_before_{reference_date.strftime("%Y%m%d")}'
                     })
 
-            goal_values = [np.mean(kr_values_list) for kr_values_list in goal_values_dict.values()]
-            reference_value = np.mean(goal_values) if goal_values else 0
+            # Re-normalize: Group by Goal Name proper to handle multiple KRs per goal correctly
+            final_goal_values = defaultdict(list)
+            for item in kr_details:
+                final_goal_values[item['goal_name']].append(item['kr_value'])
+            
+            final_averages = []
+            for g_name, vals in final_goal_values.items():
+                final_averages.append(np.mean(vals))
+
+            reference_value = np.mean(final_averages) if final_averages else 0
             
             return reference_value, kr_details
 
