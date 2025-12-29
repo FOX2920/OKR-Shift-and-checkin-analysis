@@ -449,7 +449,7 @@ class UserManager:
             })
         
         # Check if meets criteria (>= 2 weeks OR total_checkins > 5)
-        meets_criteria = weeks_with_checkins >= 2 or total_checkins > 5
+        meets_criteria = total_checkins > 3
         
         return {
             'meets_criteria': meets_criteria,
