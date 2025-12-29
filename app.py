@@ -58,7 +58,7 @@ class DateUtils:
         monday_current_week = today - timedelta(days=days_to_monday_current_week)
         monday_previous_week = monday_current_week - timedelta(days=7)
         friday_previous_week = monday_previous_week + timedelta(days=4)
-        return friday_previous_week
+        return friday_previous_week.replace(hour=23, minute=59, second=59)
 
     @staticmethod
     def get_quarter_start_date() -> datetime:
@@ -78,11 +78,15 @@ class DateUtils:
 
     @staticmethod
     def convert_timestamp_to_datetime(timestamp) -> Optional[str]:
-        """Convert timestamp to datetime string"""
+        """Convert timestamp to datetime string in Asia/Ho_Chi_Minh timezone"""
         if timestamp is None or timestamp == '' or timestamp == 0:
             return None
+        import pytz # Import locally to avoid messing up top of file if not needed everywhere
         try:
-            return datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S')
+            dt_utc = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+            tz_hcm = pytz.timezone('Asia/Ho_Chi_Minh')
+            dt_hcm = dt_utc.astimezone(tz_hcm)
+            return dt_hcm.strftime('%Y-%m-%d %H:%M:%S')
         except (ValueError, TypeError):
             return None
 
