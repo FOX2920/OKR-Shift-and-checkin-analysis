@@ -3967,11 +3967,42 @@ def setup_cycle_selection(analyzer) -> Dict:
             st.error("❌ Could not load cycles. Please check your API tokens and connection.")
             return None
 
+        # Determine default index based on current date
+        default_index = 0
+        now = datetime.now()
+        hcm_tz = timezone(timedelta(hours=7)) # Ensure timezone definition if not global, but assuming global or re-import if needed. 
+        # Actually hcm_tz might be defined globally or we use offset-naive comparison if cycles use consistent naive approach in this app context. 
+        # In goal.py we used hcm_tz. goal_app.py has `from datetime import datetime, timedelta, timezone` likely.
+        # Let's check how `get_cycle_list` returns dates. Usually API returns strings or parsed datetimes.
+        
+        for i, cycle in enumerate(cycles):
+            # cycle['start_time'] assumed to be parsed datetime or we parse it
+            # Safest is to use the logic from goal.py
+            try:
+                start_time = cycle.get('start_time')
+                if isinstance(start_time, str):
+                    # Parse if string (fallback if not already parsed)
+                     # 2024-01-01T00:00:00Z format usually
+                    pass # goal_app.py might have it parsed in get_cycle_list. 
+                    # Let's rely on standard logic similar to goal.py but robust.
+                
+                # Simplified check: if cycle['name'] contains current quarter hints? 
+                # Better: Use date logic if start_time is reliable.
+                if isinstance(start_time, datetime):
+                     # Convert to HCM or naive
+                     start_hcm = start_time.astimezone(timezone(timedelta(hours=7))).replace(tzinfo=None)
+                     end_hcm = start_hcm + timedelta(days=100)
+                     if start_hcm <= now <= end_hcm:
+                         default_index = i
+                         break
+            except Exception:
+                continue
+
         cycle_options = {f"{cycle['name']} ({cycle['formatted_start_time']})": cycle for cycle in cycles}
         selected_cycle_name = st.selectbox(
             "Select Cycle",
             options=list(cycle_options.keys()),
-            index=0,
+            index=default_index,
             help="Choose the quarterly cycle to analyze"
         )
         
