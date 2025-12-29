@@ -4151,7 +4151,7 @@ def setup_enhanced_email_configuration(analyzer):
                 "all_with_goals": "Nhân viên có Goal + Admin",
                 "okr_users": "People with OKRs (legacy option)"
             }[x],
-            index=0  # Mặc định chọn all_with_goals
+            index=1  # Mặc định chọn special (theo yêu cầu)
         )
         
         # Display recipient info với analyzer
