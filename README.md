@@ -36,7 +36,7 @@ A comprehensive Streamlit application for analyzing Objectives and Key Results (
 Run the Streamlit application:
 
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 ### Configuration
