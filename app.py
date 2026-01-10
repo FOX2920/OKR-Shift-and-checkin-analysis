@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import json
+import time
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -1113,19 +1114,26 @@ class APIClient:
         self.account_token = account_token
 
     def _make_request(self, url: str, data: Dict, description: str = "") -> requests.Response:
-        """Make HTTP request with error handling"""
-        try:
-            response = requests.post(url, data=data, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error {description}: {e}")
-            raise
+        """Make HTTP request with error handling and retries"""
+        max_retries = 3
+        retry_delay = 1
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, data=data, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                if attempt == max_retries - 1:
+                    st.error(f"Error {description}: {e}")
+                    raise
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
 
     def get_filtered_members(self) -> pd.DataFrame:
         """Get filtered members from account API"""
         url = "https://account.base.vn/extapi/v1/group/get"
-        data = {"access_token": self.account_token, "path": "nvvanphong"}
+        data = {'access_token_v2': self.account_token, "path": "nvvanphong"}
         
         response = self._make_request(url, data, "fetching account members")
         response_data = response.json()
@@ -1154,7 +1162,7 @@ class APIClient:
     def get_cycle_list(self) -> List[Dict]:
         """Get list of quarterly cycles sorted by most recent first"""
         url = "https://goal.base.vn/extapi/v1/cycle/list"
-        data = {'access_token': self.goal_token}
+        data = {'access_token_v2': self.goal_token}
 
         response = self._make_request(url, data, "fetching cycle list")
         data = response.json()
@@ -1179,7 +1187,7 @@ class APIClient:
     def get_account_users(self) -> pd.DataFrame:
         """Get users from Account API"""
         url = "https://account.base.vn/extapi/v1/users"
-        data = {"access_token": self.account_token}
+        data = {'access_token_v2': self.account_token}
 
         response = self._make_request(url, data, "fetching account users")
         json_response = response.json()
@@ -1197,7 +1205,7 @@ class APIClient:
     def get_goals_data(self, cycle_path: str) -> pd.DataFrame:
         """Get goals data from API"""
         url = "https://goal.base.vn/extapi/v1/cycle/get.full"
-        data = {'access_token': self.goal_token, 'path': cycle_path}
+        data = {'access_token_v2': self.goal_token, 'path': cycle_path}
 
         response = self._make_request(url, data, "fetching goals data")
         data = response.json()
@@ -1221,7 +1229,7 @@ class APIClient:
         all_krs = []
         
         for page in range(1, MAX_PAGES_KRS + 1):
-            data = {"access_token": self.goal_token, "path": cycle_path, "page": page}
+            data = {'access_token_v2': self.goal_token, "path": cycle_path, "page": page}
 
             response = self._make_request(url, data, f"loading KRs at page {page}")
             response_data = response.json()
@@ -1252,7 +1260,7 @@ class APIClient:
         all_checkins = []
         
         for page in range(1, MAX_PAGES_CHECKINS + 1):
-            data = {"access_token": self.goal_token, "path": cycle_path, "page": page}
+            data = {'access_token_v2': self.goal_token, "path": cycle_path, "page": page}
 
             response = self._make_request(url, data, f"loading checkins at page {page}")
             response_data = response.json()
