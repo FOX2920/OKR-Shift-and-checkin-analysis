@@ -1,5 +1,7 @@
 .env
 goal_data.csv
-goal_test.py
+
+
 __pycache__/
+
 *.pyc

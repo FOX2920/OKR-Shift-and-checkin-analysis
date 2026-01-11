@@ -27,6 +27,7 @@ import base64
 from io import BytesIO
 import plotly.io as pio
 import io
+from excel_generator import OKRSheetGenerator
 
 # Configuration
 warnings.filterwarnings('ignore')
@@ -1210,8 +1211,29 @@ class APIClient:
         response = self._make_request(url, data, "fetching goals data")
         data = response.json()
 
+        def extract_form_data(target_obj):
+            # strict columns requested by user
+            form_data = {
+                "Mức độ đóng góp vào mục tiêu công ty": "",
+                "Mức độ ưu tiên mục tiêu của Quý": "",
+                "Tính khó/tầm ảnh hưởng đến hệ thống": ""
+            }
+            if 'form' in target_obj and isinstance(target_obj['form'], list):
+                for item in target_obj['form']:
+                    key = item.get('name')
+                    # normalize key? User provided strict keys.
+                    # Base might have subtle diffs, but user provided strict names. 
+                    # Assuming keys match exactly.
+                    val = item.get('value')
+                    if key in form_data:
+                        form_data[key] = val
+            return form_data
+
         goals_data = []
         for goal in data.get('goals', []):
+            # Extract form data
+            form_info = extract_form_data(goal)
+            
             goals_data.append({
                 'goal_id': goal.get('id'),
                 'goal_name': goal.get('name', 'Unknown Goal'),
@@ -1219,6 +1241,9 @@ class APIClient:
                 'goal_since': DateUtils.convert_timestamp_to_datetime(goal.get('since')),
                 'goal_current_value': goal.get('current_value', 0),
                 'goal_user_id': str(goal.get('user_id', '')),
+                'alignment_score_str': form_info.get("Mức độ đóng góp vào mục tiêu công ty", ""),
+                'priority_score_str': form_info.get("Mức độ ưu tiên mục tiêu của Quý", ""),
+                'impact_score_str': form_info.get("Tính khó/tầm ảnh hưởng đến hệ thống", "")
             })
 
         return pd.DataFrame(goals_data)
@@ -2185,7 +2210,10 @@ class EmailReportGenerator:
 
 
 
-class OKRAnalysisSystem:
+
+
+
+
     """Main OKR Analysis System combining all components"""
 
     def __init__(self, goal_access_token: str, account_access_token: str):
@@ -2361,7 +2389,198 @@ class OKRAnalysisSystem:
             st.error(f"Error analyzing missing goals and checkins: {e}")
             return [], [], []
 
+
+    def get_user_excel_data(self, user_name: str, weekly_shifts: List[Dict], period_checkins: List[Dict], alignment_data: Dict) -> Dict:
+        """
+        Prepare data for Excel generation for a single user.
+        Based on user's specific scoring rules.
+        """
+        stats = {}
+        
+        # 1. Weekly Shift Data
+        # Formula: (Dịch chuyển tháng / 33.33) * 100
+        # Classification: <25%, 25-50%, 50-75%, 75-100%, >100%
+        
+        # We need monthly shift data. 'weekly_shifts' passed here might be weekly.
+        # Ideally we should pass monthly_shifts if available, or use the weekly sum?
+        # User said "Dịch chuyển so với tháng trước".
+        # Let's assume we use the 'okr_shift_monthly' if present in the weekly_shifts list (which might be enriched) 
+        # OR we need the actual monthly data.
+        # For now, let's use the 'okr_shift' from the passed list, assuming it's the relevant one (or we need to update the caller to pass monthly data).
+        
+        # Strategy: The caller (run_analysis -> show_export_options) passes 'okr_shifts'. 
+        # If we want monthly, we should check if caller passed monthly data or we find it.
+        # Let's try to look for 'okr_shift_monthly' key first, else fallback to 'okr_shift'.
+        
+        user_shift_data = next((u for u in weekly_shifts if u['user_name'] == user_name), None)
+        
+        shift_percentage = 0
+        if user_shift_data:
+            # Prefer monthly shift if available
+            raw_shift = user_shift_data.get('okr_shift_monthly', user_shift_data.get('okr_shift', 0))
+            
+            # Calculate % based on target 33.33%
+            # If raw_shift is already %, e.g. 0.1 (10%), then (10/33.33)*100 = 30%
+            # If raw_shift is absolute value, we assume it's comparable to 0-1 scale? 
+            # Usually OKR shift is 0.0 to 1.0 (0-100%).
+            # Let's assume raw_shift is 0.XYZ (e.g. 0.15 = 15%).
+            # Formula: (0.15 * 100) / 33.33 * 100 ?? No.
+            # User says: "Dịch chuyển so với tháng trước/33,3%"
+            # Example: Shift = 10%. (10 / 33.33) * 100 = 30%. -> 25-50% bucket.
+            
+            # Assuming raw_shift is float 0.0-1.0.
+            shift_val = raw_shift * 100 # Convert to % first (e.g. 15.0)
+            
+            if shift_val != 0:
+                 shift_percentage = (shift_val / 33.33) * 100
+            else:
+                 shift_percentage = 0
+
+            # Classification
+            if shift_percentage < 25:
+                stats['shift_lt_25'] = True # +5
+            elif 25 <= shift_percentage < 50:
+                stats['shift_25_50'] = True # +10
+            elif 50 <= shift_percentage < 75:
+                stats['shift_50_75'] = True # +15
+            elif 75 <= shift_percentage < 100:
+                stats['shift_75_100'] = True # +18
+            else: # >= 100
+                stats['shift_gt_100'] = True # +20
+        else:
+             stats['shift_lt_25'] = True # Default 0 -> <25
+                
+        # 2. Check-in & Discipline
+        # 2.1 Has OKRs
+        user_goals = self.final_df[
+             (self.final_df['goal_user_name'] == user_name) & 
+             (self.final_df['goal_name'].notna())
+        ]
+        has_okrs = not user_goals.empty
+        stats['has_okrs'] = "Yes" if has_okrs else "No"
+        
+        # Check-in Score: Count * 2, Max 8
+        user_checkin_data = next((u for u in period_checkins if u['user_name'] == user_name), None)
+        checkin_score = 0
+        if user_checkin_data:
+            # Use 'checkin_count_period' or calculate from raw checkins if period is too long?
+            # Assuming 'period_checkins' is for the relevant month/period.
+            count = user_checkin_data.get('checkin_count_period', 0)
+            checkin_score = min(count * 2, 8) 
+            
+        stats['checkin_score'] = True 
+        stats['checkin_score_val'] = checkin_score
+
+        # Collaboration: Default 2
+        stats['collab_score'] = True
+        
+        # 2.2 Quality: Median of next_action_scores (1, 3, 5)
+        # We need to calculate/mock next_action_score logic
+        
+        # Get all checkins for user to calculate median
+        user_checkins_rows = self.final_df[
+            (self.final_df['goal_user_name'] == user_name) & 
+            (self.final_df['checkin_content'].notna())
+        ]
+        
+        scores = []
+        if not user_checkins_rows.empty:
+            # Heuristic for next_action_score (1, 3, 5)
+            # 1: No clear action
+            # 3: Status report
+            # 5: Clear action
+            # Proxy: Content length
+            for content in user_checkins_rows['checkin_content'].astype(str):
+                length = len(content)
+                if length < 20: s = 1
+                elif length < 80: s = 3
+                else: s = 5
+                scores.append(s)
+        
+        median_score = np.median(scores) if scores else 1
+        
+        # Fill bucket
+        if median_score >= 4.5:
+            stats['quality_high'] = True
+        elif median_score >= 2.5:
+            stats['quality_med'] = True
+        else:
+            stats['quality_low'] = True
+
+        # 3. Section II: Median for Alignment, Priority, Impact
+        # "tương tự thế phần II cũng tính trung vị cho cả 3 cái"
+        
+        # Get all goals for this user from final_df (unique goals)
+        # final_df is joined with KRs and Checkins, so goals are duplicated.
+        # We need unique goals.
+        user_goals_df = self.final_df[self.final_df['goal_user_name'] == user_name].drop_duplicates('goal_id')
+        
+        def calculate_hybrid_score_from_str_col(col_name):
+            values = []
+            if col_name in user_goals_df.columns:
+                for val_str in user_goals_df[col_name]:
+                    if pd.notna(val_str) and isinstance(val_str, str) and len(val_str) > 0:
+                        try:
+                            # Take first char (e.g. "1 - ...")
+                            first_char = val_str.strip()[0]
+                            val = int(first_char)
+                            values.append(val)
+                        except:
+                            pass
+            
+            if not values:
+                return 1.0 # Default to 1 if empty/error
+                
+            # 1. Calculate Median
+            med = np.median(values)
+            
+            # 2. Check if Median is integer (e.g. 3.0) or decimal (3.5)
+            if med % 1 == 0:
+                return float(med)
+            
+            # 3. If decimal, use Mode (Most frequent, max if tie)
+            counts = {}
+            for v in values:
+                counts[v] = counts.get(v, 0) + 1
+            max_count = max(counts.values())
+            modes = [k for k, v in counts.items() if v == max_count]
+            return float(max(modes))
+
+        align_score = calculate_hybrid_score_from_str_col('alignment_score_str')
+        prio_score = calculate_hybrid_score_from_str_col('priority_score_str')
+        impact_score = calculate_hybrid_score_from_str_col('impact_score_str')
+        
+        # Deployment for Alignment Bucket
+        # Map 1-5 to specific keys
+        if align_score >= 4.5: stats['align_direct_2'] = True      # 5
+        elif align_score >= 3.5: stats['align_direct_1'] = True    # 4
+        elif align_score >= 2.5: stats['align_indirect_2'] = True  # 3
+        elif align_score >= 1.5: stats['align_indirect_1'] = True  # 2
+        else: stats['align_personal'] = True                       # 1
+        
+        # Priority Bucket
+        if prio_score >= 4.5: stats['prio_very_important_2'] = True
+        elif prio_score >= 3.5: stats['prio_very_important_1'] = True
+        elif prio_score >= 2.5: stats['prio_important_2'] = True
+        elif prio_score >= 1.5: stats['prio_important_1'] = True
+        else: stats['prio_normal'] = True
+        
+        # Impact Bucket
+        # Excel template seems to map 1-5: 
+        # 1: Personal, 2: Team, 3: Team(High), 4: Company, 5: Company(High)
+        if impact_score >= 4.5: stats['impact_company_2'] = True
+        elif impact_score >= 3.5: stats['impact_company_1'] = True
+        elif impact_score >= 2.5: stats['impact_team_2'] = True
+        elif impact_score >= 1.5: stats['impact_team_1'] = True
+        else: stats['impact_personal'] = True
+        
+        return {
+            'name': user_name,
+            'stats': stats
+        }
+
     def _get_users_with_checkins(self) -> set:
+
         """Get set of users who have made checkins"""
         users_with_checkins = set()
         if 'checkin_user_id' in self.final_df.columns:
@@ -3532,7 +3751,7 @@ def _display_overall_checkin_summary_metrics(overall_df: pd.DataFrame, quarter_s
         st.metric("🏆 Tần suất cao nhất/tuần", f"{max_frequency_quarter:.2f}")
 
 def show_export_options(df: pd.DataFrame, okr_shifts: List, okr_shifts_monthly: List, 
-                       period_checkins: List, overall_checkins: List, analyzer):
+                       period_checkins: List, overall_checkins: List, analyzer, cycle_name: str = "Quarter"):
     """Show data export options"""
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     
@@ -3566,6 +3785,55 @@ def show_export_options(df: pd.DataFrame, okr_shifts: List, okr_shifts_monthly: 
                 file_name=f"okr_shifts_monthly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv"
             )
+            
+    # New Excel Format Export
+    st.markdown("---")
+    st.subheader("📊 Xuất báo cáo Excel (Mới)")
+    col_ex_1, col_ex_2 = st.columns(2)
+    
+    with col_ex_1:
+        if st.button("📥 Generate Excel Report (New Format)"):
+            with st.spinner("Generating Excel report..."):
+                try:
+                    # 1. Ensure Alignment Data is available
+                    alignment_analysis = analyzer.analyze_alignment_contribution()
+                    
+                    # 2. Collect all user data
+                    # We iterate over filtered members to ensure we cover everyone relevant, 
+                    # or just those with Data?
+                    # Let's use users present in okr_shifts (Weekly) as base, as they have OKR activity
+                    # OR use filtered_members_df if we want to show empty columns for everyone
+                    
+                    # Logic: Use users from Weekly Shifts (Active OKR users)
+                    # users_to_export = [u['user_name'] for u in okr_shifts] 
+                    
+                    # Better: Use all users with Goals
+                    users_with_goals = df['goal_user_name'].dropna().unique()
+                    
+                    excel_users_data = []
+                    for user_name in users_with_goals:
+                        stats = analyzer.get_user_excel_data(user_name, okr_shifts, period_checkins, alignment_analysis)
+                        excel_users_data.append(stats)
+                        
+                    # 3. Generate Excel
+                    if excel_users_data:
+                        generator = OKRSheetGenerator()
+                        
+                        excel_file = generator.generate_excel(excel_users_data, cycle_name)
+                        
+                        st.download_button(
+                            label="📥 Click here to Download Excel Report",
+                            data=excel_file.getvalue(),
+                            file_name=f"OKR_Report_New_Format_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        st.success(f"✅ Generated report for {len(excel_users_data)} users!")
+                    else:
+                        st.warning("No user data found to generate report.")
+                        
+                except Exception as e:
+                    st.error(f"Error generating Excel: {e}")
+
 
 def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
     """Run the main analysis"""
@@ -3654,7 +3922,7 @@ def run_analysis(analyzer, selected_cycle: Dict, show_missing_analysis: bool):
         
         # Export options
         st.subheader("💾 Xuất dữ liệu")
-        show_export_options(df, okr_shifts, okr_shifts_monthly, period_checkins, overall_checkins, analyzer)
+        show_export_options(df, okr_shifts, okr_shifts_monthly, period_checkins, overall_checkins, analyzer, selected_cycle['name'])
         
         st.success("✅ Analysis completed successfully!")
         
