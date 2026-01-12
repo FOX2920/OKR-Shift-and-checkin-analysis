@@ -1,90 +1,51 @@
-# 🎯 OKR & Check-in Analysis Dashboard
+# OKR & Checkin Analysis Tool
 
-A comprehensive Streamlit application for analyzing Objectives and Key Results (OKR) progress and Check-in behaviors within your organization. This tool integrates with **Base.vn** APIs to provide real-time insights, visualizations, and automated reporting.
+This application is a Streamlit-based dashboard for analyzing OKR (Objectives and Key Results) progress and Check-in data from Base.vn.
 
-## ✨ Features
+## Features
 
-- **📊 Real-time Dashboard**: Visualize OKR progress and check-in statistics in real-time.
-- **🔄 OKR Shift Analysis**: Track weekly and monthly movements in OKR scores to identify progress (📈), stability (➡️), or risks (📉).
-- **📝 Check-in Monitoring**: Analyze check-in frequency and compliance (e.g., users with goals but no check-ins).
-- **📧 Automated Reporting**: Generate and send detailed HTML email reports to managers or the entire company.
-- **📈 Visual Charts**: Interactive charts using Plotly for deep dives into data.
-- **💾 Excel Export**: Export detailed analysis data for further offline processing.
+*   **OKR Analysis**: Comprehensive view of OKR progress, tracking "OKR Shift" (Dịch chuyển OKR) month-over-month.
+*   **Monthly Logic**: 
+    *   Calculates OKR shift based on monthly progress.
+    *   Special handling for quarter-start months (always 100% baseline or adjusted).
+*   **Check-in Quality Assessment**: 
+    *   Integrates with Base Table (ID 81) to fetch "Next Action Scores".
+    *   Calculates Median Score to classify check-in quality (High/Medium/Low).
+*   **Excel Reporting**: 
+    *   Generates a professional "Đánh giá OKRs" Excel report.
+    *   Includes automatic scoring for OKR Shift, Check-in frequency, and Quality.
+    *   Includes a built-in color-coded legend (Row 40+) for easy reference.
 
-## 🛠️ Prerequisites
+## Installation
 
-- **Python 3.8+**
-- **Base.vn API Tokens**:
-    - `GOAL_ACCESS_TOKEN`: For accessing OKR/Goal data.
-    - `ACCOUNT_ACCESS_TOKEN`: For accessing user account data.
-
-## 📦 Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/FOX2920/OKR-Shift-and-checkin-analysis.git
-    cd OKR-Shift-and-checkin-analysis
-    ```
-
-2.  **Install dependencies:**
+1.  Clone the repository.
+2.  Install dependencies:
     ```bash
     pip install -r requirements.txt
     ```
 
-## 🚀 Usage
+## Configuration
 
-Run the Streamlit application:
+The application requires Base.vn API tokens. You can set them in a `.env` file in the root directory:
 
-```bash
-python -m streamlit run app.py
+```env
+GOAL_ACCESS_TOKEN=your_goal_access_token
+ACCOUNT_ACCESS_TOKEN=your_account_access_token
+TABLE_ACCESS_TOKEN=your_table_access_token_id_81
 ```
 
-### Configuration
-On the sidebar, you will need to input your **Base.vn API Tokens** to fetch data.
+## Usage
 
-1.  Enter **Goal Access Token**.
-2.  Enter **Account Access Token**.
-3.  Select the **Cycle** (OKR Quarter) you want to analyze.
-4.  Click **"Load & Process Data"**.
-
-## 📊 Reports Available
-
-- **Overview**: General stats on users, goals, and check-in rates.
-- **Missing Check-ins**: Lists users who haven't checked in despite having goals.
-- **OKR Analysis**: Detailed breakdown of OKR score movements (Weekly/Monthly).
-- **Check-in Behavior**: Top performers and "at-risk" users based on check-in frequency.
-
-## 🧮 Advanced Scoring Logic
-
-The application implements a custom scoring model for Excel generation:
-
-### 1. OKR Shift Score
-Calculated as `(Monthly Shift / 33.33) * 100` and mapped to buckets:
-- **< 25%**: Low progress
-- **25% - 50%**: Moderate progress
-- **50% - 75%**: Good progress
-- **75% - 100%**: Excellent progress
-- **> 100%**: Outstanding
-
-### 2. Disicpline & Check-ins
-- **Check-in Score**: 2 points per check-in (Max 8 points/month).
-- **Collaboration**: Fixed default score of **2**.
-- **Quality**: Derived from `next_action` content length (Short/Medium/Long → 1/3/5 points). Median value used.
-
-### 3. Section II (Alignment, Priority, Impact)
-Extracted directly from **Goal Forms** ("Mức độ đóng góp...", "Mức độ ưu tiên...", "Tính khó...").
-**Calculation Method (Hybrid Mode)**:
-1.  Calculate **Median** of scores.
-2.  If Median is Integer: Use Median.
-3.  If Median is Decimal: Use **Mode** (Most Frequent). If tie, use Max.
-
-## 📤 Excel Export
-
-The app generates a formatted Excel report (`.xlsx`) suitable for monthly performance reviews.
-- **Template-based**: Uses a standard organizational template.
-- **Auto-filled**: Populates all user info, OKR stats, Check-in counts, and calculated scores.
-- **Styling**: Pre-styled cells (Times New Roman, 11pt, Borders) for immediate use.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+1.  Run the Streamlit app:
+    ```bash
+    streamlit run app.py
+    ```
+2.  **Sidebar Interactions**:
+    *   Select the **Cycle** (Chu kỳ) for analysis.
+    *   Configure **Email** recipients if sending reports.
+3.  **Analysis**:
+    *   The app will automatically load and process data.
+    *   View "Điểm số người dùng" to see the analysis.
+4.  **Export**:
+    *   Click **"📋 Export to Excel Format"** to download the comprehensive monthly report.
+    *   The report includes the new Legend and Median Score data.

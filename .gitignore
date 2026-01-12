@@ -1,7 +1,8 @@
-.env
-goal_data.csv
+# Ignore everything
+*
 
-
-__pycache__/
-
-*.pyc
+# Allow specific files
+!app.py
+!requirements.txt
+!README.md
+!.gitignore

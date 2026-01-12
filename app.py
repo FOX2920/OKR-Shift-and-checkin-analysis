@@ -1,5 +1,9 @@
 import streamlit as st
 import pandas as pd
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 import numpy as np
 import requests
 import json
@@ -27,7 +31,92 @@ import base64
 from io import BytesIO
 import plotly.io as pio
 import io
-from excel_generator import OKRSheetGenerator
+import pytz
+
+class TableAPIClient:
+    """Client for fetching data from Base Table (ID 81)"""
+    
+    def __init__(self):
+        self.url = "https://table.base.vn/extapi/v1/table/records"
+        # Using the tokens established in table.py
+        self.TABLE_ACCESS_TOKEN = os.getenv('TABLE_ACCESS_TOKEN')
+        if not self.TABLE_ACCESS_TOKEN:
+            # Fallback to hardcoded string only for development/testing if needed, or raise warning
+            # Keeping the hardcoded one commented out for reference or emergency fallback (NOT RECOMMENDED for production)
+            # self.TABLE_ACCESS_TOKEN = '...' 
+            pass
+        
+    def get_checkin_scores(self) -> dict:
+        """
+        Fetch all records and return a mapping of:
+        {user_id}_{timestamp} -> next_action_score
+        """
+        payload = {'access_token_v2': self.TABLE_ACCESS_TOKEN, 'table_id': 81}
+        headers = {}
+        scores_map = {}
+
+        try:
+            # print("DEBUG: Fetching checkin scores from Base Table...")
+            response = requests.post(self.url, headers=headers, data=payload)
+            data = response.json()
+            records = data.get('data', [])
+            
+            if not records:
+                # print("DEBUG: No records found in Base Table.")
+                return {}
+
+            # Extract vals from each record
+            rows = [r.get('vals', {}) for r in records]
+            df = pd.DataFrame(rows)
+            
+            # Check if required columns exist
+            required_cols = ['f2', 'f7', 'f10']
+            for col in required_cols:
+                if col not in df.columns:
+                    continue
+
+            for _, row in df.iterrows():
+                try:
+                    score_val = row.get('f2')
+                    timestamp_val = row.get('f7')
+                    user_id_val = row.get('f10')
+                    
+                    if pd.isna(score_val) or pd.isna(timestamp_val) or pd.isna(user_id_val):
+                        continue
+                        
+                    # Clean User ID
+                    user_id = str(user_id_val).strip()
+                    if not user_id: continue
+                    
+                    # Clean Timestamp
+                    try:
+                         # dt is naive (representing local time 2026-...)
+                         # We verified this is treated as UTC by .timestamp() resulting in +7h offset vs real UTC
+                         # So we subtract 7h to get correct UTC timestamp
+                         dt = pd.to_datetime(timestamp_val) - pd.Timedelta(hours=7)
+                         timestamp = int(dt.timestamp())
+                    except:
+                        continue
+                        
+                    # Clean Score
+                    try:
+                        score = float(score_val)
+                    except:
+                        score = 0
+                    
+                    # Create Key matching goal_test.py expectation
+                    key = f"{user_id}_{timestamp}"
+                    scores_map[key] = score
+                    
+                except Exception:
+                    continue
+                    
+            # print(f"DEBUG: Loaded {len(scores_map)} checkin scores from Base Table.")
+            return scores_map
+
+        except Exception as e:
+            # print(f"Error fetching checkin scores from Table: {e}")
+            return {}
 
 # Configuration
 warnings.filterwarnings('ignore')
@@ -46,6 +135,237 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+
+class OKRSheetGenerator:
+    """Generates OKR Evaluation Excel Sheet"""
+    
+    def __init__(self):
+        self.header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid") # Blue
+        self.section_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid") # Yellow
+        self.header_font = Font(name='Times New Roman', size=11, bold=True, color="FFFFFF")
+        self.section_font = Font(name='Times New Roman', size=11, bold=True, italic=True)
+        self.item_font_bold_italic = Font(name='Times New Roman', size=11, bold=True, italic=True)
+        self.normal_font = Font(name='Times New Roman', size=11)
+        self.thin_border = Border(left=Side(style='thin'), 
+                         right=Side(style='thin'), 
+                         top=Side(style='thin'), 
+                         bottom=Side(style='thin'))
+        self.center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        self.left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    def generate_excel(self, users_data: List[Dict], cycle_name: str) -> BytesIO:
+        """
+        Generate Excel file with user data.
+        users_data: List of dicts, each containing 'name', 'stats' (derived from get_user_excel_data)
+        """
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Đánh giá OKRs"
+
+        # 1. Setup Columns
+        ws.column_dimensions['A'].width = 5   # TT
+        ws.column_dimensions['B'].width = 60  # Noi dung
+        ws.column_dimensions['C'].width = 10  # Tu cham diem
+        
+        # User columns
+        user_names = [u['name'] for u in users_data]
+        if not user_names:
+             user_names = ["Demo User"] # Fallback if empty to avoid index error in headers
+
+        for i, user in enumerate(user_names):
+            col_letter = get_column_letter(4 + i)
+            ws.column_dimensions[col_letter].width = 15
+            ws.cell(row=2, column=4 + i).value = user
+
+        # 2. Header
+        # Avoid error if no users
+        end_col = 3 + len(user_names) if user_names else 4
+        ws.merge_cells(f'D1:{get_column_letter(end_col)}1')
+        title_cell = ws['D1']
+        title_cell.value = f"ĐÁNH GIÁ OKRs - {cycle_name}".upper()
+        title_cell.font = Font(name='Times New Roman', size=14, bold=True)
+        title_cell.alignment = self.center_align
+
+        # Row 2 Headers
+        headers = ["TT", "Nội dung", "Tự chấm điểm"]
+        for col, text in enumerate(headers, 1):
+            cell = ws.cell(row=2, column=col)
+            cell.value = text
+            cell.fill = self.header_fill
+            cell.font = self.header_font
+            cell.alignment = self.center_align
+            cell.border = self.thin_border
+
+        # Apply header style to user columns
+        for i in range(len(user_names)):
+            cell = ws.cell(row=2, column=4 + i)
+            cell.fill = self.header_fill
+            cell.font = self.header_font
+            cell.alignment = self.center_align
+            cell.border = self.thin_border
+
+        # 3. Content Template & Data Filling
+        # Structure: (TT, Content, Score/Ref, Type, Key_for_filling)
+        # Type: section, item, subitem, score_row
+        # Key_for_filling: Identifying which stat maps to this row
+        
+        data_structure = [
+            ("I", "CHẤT LƯỢNG THỰC THI OKR", "", "section", None),
+            ("1", "Kết quả thực tế so với mục tiêu: (Dịch chuyển so với tháng trước/33,3%)", "", "item", "okr_shift_display"),
+            ("-", "Nhỏ hơn 25%", 5, "score_row", "shift_lt_25"),
+            ("-", "Từ 25 - 50%", 10, "score_row", "shift_25_50"),
+            ("-", "Từ 50 - 75%", 15, "score_row", "shift_50_75"),
+            ("-", "Từ 75 - 100%", 18, "score_row", "shift_75_100"),
+            ("-", "Trên 100% hoặc có đột phá lớn (Cấp trên ghi nhận)", 20, "score_row", "shift_gt_100"),
+            
+            ("2", "Tiến độ và tính kỷ luật", "", "item", None),
+            ("2.1", "Đầy đủ OKRs cá nhân được cập nhật trên Base Goal", "Yes/No", "subitem", "has_okrs"),
+            ("-", "Có Check-in trên base hàng tuần (2 điểm/lần check-in)", 8, "score_row", "checkin_score"),
+            ("-", "Có check-in với người khác, cấp quản lý, làm việc chung OKRs trong bộ phận", 2, "score_row", "collab_score"), 
+            
+            ("2.2", "Chất lượng check - in và hành động trong KR", "", "subitem", None),
+            ("-", "Không có hành động rõ ràng", 1, "score_row", "quality_low"),
+            ("-", "Chỉ báo cáo trạng thái (đang làm, đang cố, ...)", 3, "score_row", "quality_med"),
+            ("-", "Có mô tả hành động rõ ràng cụ thể + hướng giải quyết", 5, "score_row", "quality_high"),
+            
+            ("II", "TẦM QUAN TRỌNG CỦA OKR", "", "section", None),
+            ("1", "Mức độ đóng góp vào mục tiêu công ty", "", "item", None),
+            ("-", "Mục tiêu mang tính nội bộ/cá nhân", 1, "score_row", "align_personal"),
+            ("-", "Mục tiêu hỗ trợ gián tiếp Doanh thu/Khách hàng/Chất lượng (1)", 2, "score_row", "align_indirect_1"),
+            ("-", "Mục tiêu hỗ trợ gián tiếp Doanh thu/Khách hàng/Chất lượng (2)", 3, "score_row", "align_indirect_2"),
+            ("-", "Mục tiêu liên quan trực tiếp Doanh thu/Khách hàng/Chất lượng", 4, "score_row", "align_direct_1"),
+            ("-", "Mục tiêu liên quan trực tiếp Doanh thu/Khách hàng/Chất lượng (High)", 5, "score_row", "align_direct_2"),
+            
+            ("2", "Mức độ ưu tiên mục tiêu của Quý", "", "item", None),
+            ("-", "Bình thường", 1, "score_row", "prio_normal"),
+            ("-", "Quan trọng", 2, "score_row", "prio_important_1"),
+            ("-", "Quan trọng (High)", 3, "score_row", "prio_important_2"),
+            ("-", "Rất quan trọng", 4, "score_row", "prio_very_important_1"),
+            ("-", "Rất quan trọng (High)", 5, "score_row", "prio_very_important_2"),
+            
+            ("3", "Tính khó/tầm ảnh hưởng đến hệ thống", "", "item", None),
+            ("-", "Tác động với cá nhân", 1, "score_row", "impact_personal"),
+            ("-", "Tác động nội bộ phòng ban/đội nhóm", 2, "score_row", "impact_team_1"),
+            ("-", "Tác động nội bộ phòng ban/đội nhóm (High)", 3, "score_row", "impact_team_2"),
+            ("-", "Tác động nhiều phòng ban/cả công ty", 4, "score_row", "impact_company_1"),
+            ("-", "Tác động nhiều phòng ban/cả công ty (High)", 5, "score_row", "impact_company_2"),
+        ]
+
+        current_row = 3
+        
+        for tt, content, score_ref, style_type, key in data_structure:
+            # A: TT
+            cell_tt = ws.cell(row=current_row, column=1, value=tt)
+            cell_tt.alignment = self.center_align
+            cell_tt.border = self.thin_border
+            
+            # B: Content
+            cell_content = ws.cell(row=current_row, column=2, value=content)
+            cell_content.border = self.thin_border
+            cell_content.alignment = self.left_align
+            
+            # C: Score
+            cell_score = ws.cell(row=current_row, column=3, value=score_ref)
+            cell_score.alignment = self.center_align
+            cell_score.border = self.thin_border
+
+            # User columns
+            for i, user_data in enumerate(users_data):
+                col_idx = 4 + i
+                cell = ws.cell(row=current_row, column=col_idx)
+                cell.border = self.thin_border
+                cell.alignment = self.center_align
+                
+                stats = user_data.get('stats', {})
+                
+                if key: # Modified to check key for all types
+                     if style_type == "item" and key == "okr_shift_display":
+                         val = stats.get(key, '')
+                         if val: 
+                            # Display format: e.g. "35%"
+                            cell.value = val
+                     elif style_type == "score_row" or style_type == "subitem":
+                         if key == "checkin_score":
+                             val = stats.get('checkin_score_val', '')
+                             if val: cell.value = val
+                         elif key == "has_okrs":
+                             val = stats.get('has_okrs', '')
+                             cell.value = val 
+                             if val == 'No': cell.font = Font(color="FF0000")
+                         elif key in stats and stats[key]:
+                             if isinstance(score_ref, (int, float)):
+                                cell.value = score_ref 
+                             else:
+                                cell.value = "x"
+
+            # Styling
+            if style_type == "section":
+                for col in range(1, 4 + len(user_names)):
+                    ws.cell(row=current_row, column=col).fill = self.section_fill
+                cell_tt.font = self.section_font
+                cell_content.font = self.section_font
+                
+            elif style_type == "item":
+                cell_tt.font = self.item_font_bold_italic
+                cell_content.font = self.item_font_bold_italic
+                
+            elif style_type == "subitem":
+                 cell_content.font = Font(name='Times New Roman', size=11, bold=True)
+                 if score_ref == "Yes/No":
+                     cell_score.font = Font(name='Times New Roman', size=11, color="FF0000")
+                     
+            else: # score_row
+                cell_content.font = self.normal_font
+
+            current_row += 1
+
+        # Total Row
+        total_row_idx = current_row
+        ws.cell(row=total_row_idx, column=2, value="Tổng cộng OKR").font = Font(name='Times New Roman', size=11, bold=True)
+        ws.cell(row=total_row_idx, column=1).border = self.thin_border
+        ws.cell(row=total_row_idx, column=2).border = self.thin_border
+        ws.cell(row=total_row_idx, column=3).border = self.thin_border
+
+        for i, _ in enumerate(user_names):
+            col_idx = 4 + i
+            cell = ws.cell(row=total_row_idx, column=col_idx)
+            cell.fill = self.section_fill
+            cell.font = Font(name='Times New Roman', size=11, bold=True)
+            cell.border = self.thin_border
+            # SUM formula
+            col_letter = get_column_letter(col_idx)
+            cell.value = f"=SUM({col_letter}3:{col_letter}{total_row_idx-1})"
+
+        # 4. Legend (Fixed at B40-B44 as requested)
+        legend_data = [
+            (40, "Mức 1 ≤ 15", "FF0000"),       # Red
+            (41, "15 < Mức 2 ≤ 25", "00B0F0"),  # Cyan/Blue
+            (42, "25 < Mức 3 ≤ 35", "FFFF00"),  # Yellow
+            (43, "35 < Mức 4 ≤ 45", "00B050"),  # Green
+            (44, "Mức 5 > 45", "7030A0")        # Purple
+        ]
+
+        for r, text, color in legend_data:
+            cell = ws.cell(row=r, column=2)
+            cell.value = text
+            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            cell.font = Font(name='Times New Roman', size=11, bold=True)
+            cell.alignment = self.center_align
+            # Merge cell B with C for better look? User said B40-B44. Let's stick to B.
+            # But usually legends might span. The image looks like it spans B to... well image is cut off.
+            # But let's assume just B. Note column B width is 60 so it fits.
+            cell.border = self.thin_border
+            
+            # Add border to all columns in this row for B to end_col? Use image as guide.
+            # Image shows the colored bar spans the width of column B ("Nội dung").
+            # It doesn't look like it spans "Tu cham diem" (C).
+            # So applying to Column B only is correct.
+
+        buffer = BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return buffer
 
 
 class DateUtils:
@@ -95,18 +415,9 @@ class DateUtils:
     @staticmethod
     def should_calculate_monthly_shift() -> bool:
         """
-        Check if monthly shift should be calculated
-        - Không phải tháng đầu quý (1,4,7,10) HOẶC
-        - Là tuần 4 hoặc 5 của tháng đầu quý
+        Always calculate monthly shift as per new requirement
         """
-        current_month = datetime.now().month
-        
-        # Nếu không phải tháng đầu quý thì tính bình thường
-        if current_month not in QUARTER_START_MONTHS:
-            return True
-        
-        # Nếu là tháng đầu quý, chỉ tính khi là tuần 4 hoặc 5
-        return DateUtils.is_week_4_or_5_of_quarter_start_month()
+        return True
     
     @staticmethod
     def is_last_week_of_month() -> bool:
@@ -194,12 +505,13 @@ class DateUtils:
 class User:
     """User class for OKR tracking"""
     
-    def __init__(self, user_id, name, co_OKR=1, checkin=0, dich_chuyen_OKR=0, score=0):
+    def __init__(self, user_id, name, co_OKR=1, checkin=0, dich_chuyen_OKR=0, score=0, median_score=0):
         self.user_id = str(user_id)
         self.name = name
         self.co_OKR = co_OKR
         self.checkin = checkin  # 0/1: có check-in ít nhất 3/4 tuần trong tháng hiện tại
         self.dich_chuyen_OKR = dich_chuyen_OKR
+        self.median_score = median_score
         self.score = score
         self.OKR = {month: 0 for month in range(1, 13)}
 
@@ -237,7 +549,7 @@ class User:
 
     def __repr__(self):
         return (f"User(id={self.user_id}, name={self.name}, co_OKR={self.co_OKR}, "
-                f"checkin={self.checkin}, dich_chuyen_OKR={self.dich_chuyen_OKR}, score={self.score})")
+                f"checkin={self.checkin}, dich_chuyen_OKR={self.dich_chuyen_OKR}, median={self.median_score}, score={self.score})")
 
 
 class UserManager:
@@ -3280,6 +3592,173 @@ def show_realtime_checkin_preview(analyzer):
         st.error(f"Lỗi hiển thị preview: {e}")
         return pd.DataFrame()
 
+def prepare_okr_excel_data(analyzer, user_manager, table_scores_map) -> List[Dict]:
+    """Prepare data structure for OKRSheetGenerator"""
+    users_data = []
+    monthly_shifts = user_manager.monthly_okr_data 
+    
+    # Calculate checkin counts
+    checkin_counts = defaultdict(int)
+    if hasattr(user_manager, 'checkin_df') and user_manager.checkin_df is not None and not user_manager.checkin_df.empty:
+         if 'checkin_user_id' in user_manager.checkin_df.columns:
+             counts = user_manager.checkin_df.groupby('checkin_user_id').size()
+             for uid, count in counts.items():
+                 checkin_counts[str(uid)] = count
+         elif 'user_id' in user_manager.checkin_df.columns:
+             counts = user_manager.checkin_df.groupby('user_id').size()
+             for uid, count in counts.items():
+                 checkin_counts[str(uid)] = count
+                 
+    for user_id, user in user_manager.get_users().items():
+        stats = {}
+        
+        # 1. Monthly Shift
+        user_shift_entry = next((u for u in monthly_shifts if str(u.get('user_id', '')) == str(user_id)), None)
+        shift_val = 0
+        if user_shift_entry:
+            shift_val = user_shift_entry.get('okr_shift_monthly', 0)
+        
+        if shift_val != 0:
+             shift_percentage = (shift_val / 33.33) * 100
+        else:
+             shift_percentage = 0
+             
+        stats['okr_shift_display'] = f"{shift_percentage:.1f}%"
+        
+        if shift_percentage < 25: stats['shift_lt_25'] = True
+        elif 25 <= shift_percentage < 50: stats['shift_25_50'] = True
+        elif 50 <= shift_percentage < 75: stats['shift_50_75'] = True
+        elif 75 <= shift_percentage < 100: stats['shift_75_100'] = True
+        else: stats['shift_gt_100'] = True
+        
+        # 2. Checkins
+        stats['has_okrs'] = "Yes" if user.co_OKR == 1 else "No"
+        count = checkin_counts.get(str(user_id), 0)
+        checkin_score = min(count * 2, 8)
+        stats['checkin_score'] = True
+        stats['checkin_score_val'] = checkin_score
+        stats['collab_score'] = True
+        
+        # 3. Quality (Median)
+        scores = []
+        user_checkins = pd.DataFrame()
+        if hasattr(user_manager, 'checkin_df') and user_manager.checkin_df is not None and not user_manager.checkin_df.empty:
+             if 'checkin_user_id' in user_manager.checkin_df.columns:
+                 user_checkins = user_manager.checkin_df[user_manager.checkin_df['checkin_user_id'].astype(str) == str(user_id)]
+        
+        if not user_checkins.empty:
+            ts_col = 'checkin_since_timestamp'
+            if ts_col not in user_checkins.columns and 'checkin_since' in user_checkins.columns: 
+                 ts_col = 'checkin_since'
+            
+            if ts_col in user_checkins.columns:
+                for _, row in user_checkins.iterrows():
+                    ts_val = row[ts_col]
+                    try:
+                        ts_int = int(float(ts_val))
+                        key = f"{user_id}_{ts_int}"
+                        if key in table_scores_map:
+                            scores.append(table_scores_map[key])
+                    except:
+                        pass
+
+        median_q = np.median(scores) if scores else 0
+        user.median_score = median_q # Store for reference
+
+        if median_q >= 4.5: stats['quality_high'] = True
+        elif median_q >= 2.5: stats['quality_med'] = True
+        elif median_q > 0: stats['quality_low'] = True 
+        
+        # 4. Alignment / Priority / Impact (Section II)
+        # Calculate scores using Hybrid Logic (Median -> Mode)
+        col_map = {
+            'align': 'Mức độ đóng góp vào mục tiêu công ty',
+            'prio': 'Mức độ ưu tiên mục tiêu của Quý',
+            'impact': 'Tính khó/tầm ảnh hưởng đến hệ thống'
+        }
+        
+        # Get user goals df
+        user_col = 'goal_user_id'
+        if hasattr(analyzer, 'final_df') and analyzer.final_df is not None:
+             if 'pro_goal_user_id' in analyzer.final_df.columns:
+                 user_col = 'pro_goal_user_id'
+             
+             goal_id_col = 'goal_id'
+             if 'pro_goal_id' in analyzer.final_df.columns:
+                 goal_id_col = 'pro_goal_id'
+                 
+             user_goals_df = analyzer.final_df[analyzer.final_df[user_col] == user_id].drop_duplicates(goal_id_col)
+             
+             def calculate_hybrid_score(col_name):
+                values = []
+                if col_name in user_goals_df.columns:
+                    for val_str in user_goals_df[col_name]:
+                        if pd.notna(val_str) and isinstance(val_str, str) and len(val_str) > 0:
+                            try:
+                                first_char = val_str.strip()[0]
+                                val = int(first_char)
+                                values.append(val)
+                            except:
+                                pass
+                
+                if not values:
+                    return 1.0 # Default if no data
+                    
+                # 1. Calculate Median
+                med = np.median(values)
+                
+                # 2. Check if Median is integer (e.g. 3.0) or decimal (3.5)
+                if med % 1 == 0:
+                    return float(med)
+                    
+                # 3. If decimal, use Mode
+                counts = {}
+                for v in values:
+                    counts[v] = counts.get(v, 0) + 1
+                max_count = max(counts.values())
+                modes = [k for k, v in counts.items() if v == max_count]
+                return float(max(modes))
+
+             align_score = calculate_hybrid_score(col_map['align'])
+             prio_score = calculate_hybrid_score(col_map['prio'])
+             impact_score = calculate_hybrid_score(col_map['impact'])
+             
+             # Map scores to keys
+             # Alignment
+             if align_score >= 1: stats['align_personal'] = True 
+             if align_score >= 2: stats['align_indirect_1'] = True
+             if align_score >= 3: stats['align_indirect_2'] = True
+             if align_score >= 4: stats['align_direct_1'] = True
+             if align_score >= 5: stats['align_direct_2'] = True
+             
+             # Use specific key based on score exact match or range? 
+             # The sheet uses checkboxes for each level. Usually distinct or cumulative?
+             # Based on goal_test logic, it seemed to calculate a single score.
+             # The excel generator structure has distinct rows for each score 1-5.
+             # So we should probably check only the row corresponding to the score.
+             # Re-mapping:
+             stats['align_personal'] = (align_score == 1)
+             stats['align_indirect_1'] = (align_score == 2)
+             stats['align_indirect_2'] = (align_score == 3)
+             stats['align_direct_1'] = (align_score == 4)
+             stats['align_direct_2'] = (align_score >= 5)
+
+             stats['prio_normal'] = (prio_score == 1)
+             stats['prio_important_1'] = (prio_score == 2)
+             stats['prio_important_2'] = (prio_score == 3)
+             stats['prio_very_important_1'] = (prio_score == 4)
+             stats['prio_very_important_2'] = (prio_score >= 5)
+
+             stats['impact_personal'] = (impact_score == 1)
+             stats['impact_team_1'] = (impact_score == 2)
+             stats['impact_team_2'] = (impact_score == 3)
+             stats['impact_company_1'] = (impact_score == 4)
+             stats['impact_company_2'] = (impact_score >= 5)
+        
+        users_data.append({'name': user.name, 'stats': stats})
+        
+    return users_data
+
 def show_user_score_analysis(analyzer):
     """Show user score analysis using integrated monthly calculation"""
     st.subheader("🏆 Điểm số người dùng")
@@ -3314,13 +3793,13 @@ def show_user_score_analysis(analyzer):
             if DateUtils.is_last_week_of_month():
                 st.success("✅ **Đang ở tuần cuối cùng của tháng** - Hiển thị điểm checkin dựa trên tiêu chí ≥2 tuần HOẶC >5 checkin")
                 _display_score_tables(scores_df)
-                _display_score_export_options(scores_df, users)
+                _display_score_export_options(scores_df, list(users.values()) if isinstance(users, dict) else users, analyzer, user_manager)
             else:
                 st.warning("⏳ **Chưa phải tuần cuối tháng** - Score tables sẽ hiển thị với điểm checkin thực tế vào tuần cuối cùng")
                 # Vẫn hiển thị score tables nhưng với thông báo
                 st.info("💡 **Bảng điểm hiện tại** (chưa tính điểm checkin 2 tuần):")
                 _display_score_tables(scores_df)
-                _display_score_export_options(scores_df, users)
+                _display_score_export_options(scores_df, list(users.values()) if isinstance(users, dict) else users, analyzer, user_manager)
             
             return scores_df
         else:
@@ -3381,7 +3860,7 @@ def _display_score_tables(scores_df: pd.DataFrame):
     all_performers = scores_df.sort_values('Score', ascending=False)
     st.dataframe(all_performers, use_container_width=True, hide_index=True)
 
-def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
+def _display_score_export_options(scores_df: pd.DataFrame, users: List[User], analyzer=None, user_manager=None):
     """Display export options for scores"""
     col1, col2 = st.columns(2)
     
@@ -3397,21 +3876,31 @@ def _display_score_export_options(scores_df: pd.DataFrame, users: List[User]):
     
     with col2:
         if st.button("📋 Export to Excel Format"):
-            # Validation cho Streamlit Excel export
-
-            
-            wb = export_to_excel(users)
-            excel_buffer = BytesIO()
-            wb.save(excel_buffer)
-            excel_buffer.seek(0)
-            
-            st.download_button(
-                label="Download Excel Report",
-                data=excel_buffer.getvalue(),
-                file_name=f"okr_report_monthly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            st.success(f"✅ Excel file ready with {len(users)} users")
+            try:
+                # 1. Fetch data from Table (Median Scores)
+                with st.spinner("Fetching data from Base Table..."):
+                     client = TableAPIClient()
+                     table_scores = client.get_checkin_scores()
+                     
+                # 2. Prepare Data
+                if analyzer and user_manager:
+                     users_data = prepare_okr_excel_data(analyzer, user_manager, table_scores)
+                     
+                     # 3. Generate
+                     generator = OKRSheetGenerator()
+                     excel_buffer = generator.generate_excel(users_data, "Current Cycle")
+                     
+                     st.download_button(
+                        label="Download Excel Report",
+                        data=excel_buffer.getvalue(),
+                        file_name=f"okr_report_monthly_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                     )
+                     st.success(f"✅ Excel file ready with {len(users)} users")
+                else:
+                    st.error("Missing analyzer or user_manager")
+            except Exception as e:
+                st.error(f"Error generating Excel: {e}")
 
 def show_data_summary(df: pd.DataFrame, analyzer):
     """Show data summary statistics"""
