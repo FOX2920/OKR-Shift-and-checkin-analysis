@@ -32,7 +32,6 @@ from io import BytesIO
 import plotly.io as pio
 import io
 import pytz
-import ollama
 
 class TableAPIClient:
     """Client for fetching data from Base Table (ID 81)"""
@@ -1761,55 +1760,10 @@ class AIActionEvaluator:
         """
         Evaluate the quality of the 'Next Action' content.
         
-        Criteria:
-        - +1: No clear action / Vague / Empty
-        - +3: Status report only (doing, trying...)
-        - +5: Clear action + Specific solution / Concrete plan
+        Currently disabled - returns 0 for all inputs.
+        Uses median score from Base Table instead.
         """
-        # TẠM THỜI KHÓA: Return 0 luôn để không gọi AI
         return 0
-
-        # Nếu không có nội dung hoặc quá ngắn (dưới 5 ký tự) -> 0 điểm, không gọi AI
-        if not action_content or len(action_content.strip()) < 5:
-            return 0
-            
-        try:
-            prompt = f"""
-            Bạn là một trợ lý AI đánh giá chất lượng của nội dung "Công việc tiếp theo" trong báo cáo check-in.
-            
-            Nội dung cần đánh giá: "{action_content}"
-            
-            Hãy đánh giá dựa trên tiêu chí sau và CHỈ TRẢ VỀ MỘT CON SỐ (1, 3, hoặc 5):
-            - 1: Không có hành động rõ ràng, quá ngắn gọn, hoặc vô nghĩa.
-            - 3: Chỉ báo cáo trạng thái (đang làm, đang cố gắng, vẫn thế...) mà không có giải pháp cụ thể.
-            - 5: Có hành động rõ ràng, cụ thể, và hướng giải quyết/kế hoạch chi tiết.
-            
-            Output chỉ là số:
-            """
-            
-            response = ollama.generate(
-                model='gemini-3-flash-preview:cloud',
-                prompt=prompt
-            )
-            
-            result_text = response['response'].strip()
-            
-            # Extract number from response (handling potential extra text)
-            import re
-            match = re.search(r'\b(1|3|5)\b', result_text)
-            if match:
-                return int(match.group(1))
-            
-            # Fallback simple check if regex fails but simple number exists
-            if '5' in result_text: return 5
-            if '3' in result_text: return 3
-            if '1' in result_text: return 1
-            
-            return 1 # Default fallback
-            
-        except Exception as e:
-            print(f"AI Eval Error: {e}")
-            return 1 # Fallback on error
 
 
 class DataProcessor:
