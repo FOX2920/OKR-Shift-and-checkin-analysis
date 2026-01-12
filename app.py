@@ -32,6 +32,7 @@ from io import BytesIO
 import plotly.io as pio
 import io
 import pytz
+import ollama
 
 class TableAPIClient:
     """Client for fetching data from Base Table (ID 81)"""
@@ -1515,6 +1516,140 @@ class APIClient:
             'username': user['username']
         } for user in account_users])
 
+    def get_target_sub_goal_ids(self, target_id: str) -> List[str]:
+        """Fetch sub-goal IDs for a specific target"""
+        url = "https://goal.base.vn/extapi/v1/target/get"
+        data = {'access_token_v2': self.goal_token, 'id': str(target_id)}
+        
+        try:
+            # Removed separate print to reduce noise, handled in loop or debug if needed
+            response = requests.post(url, data=data, timeout=REQUEST_TIMEOUT)
+            if response.status_code == 200:
+                response_data = response.json()
+                if response_data and 'target' in response_data and response_data['target']:
+                    cached_objs = response_data['target'].get('cached_objs', [])
+                    if isinstance(cached_objs, list):
+                        return [str(item.get('id')) for item in cached_objs if 'id' in item]
+            return []
+        except Exception as e:
+            print(f"Error fetching sub-goal {target_id}: {e}")
+            return []
+
+    def parse_targets_data(self, cycle_path: str) -> pd.DataFrame:
+        """Parse targets data from API to create target mapping"""
+        url = "https://goal.base.vn/extapi/v1/cycle/get.full"
+        data = {'access_token_v2': self.goal_token, 'path': cycle_path}
+
+        response = self._make_request(url, data, "fetching targets data")
+        response_data = response.json()
+        
+        if not response_data or 'targets' not in response_data:
+            return pd.DataFrame()
+        
+        all_targets = []
+        raw_targets = response_data.get('targets', [])
+        
+        # 1. Map Company Targets (Top Level scope='company')
+        company_targets_map = {}
+        for t in raw_targets:
+            if t.get('scope') == 'company':
+                company_targets_map[str(t.get('id', ''))] = {
+                    'id': str(t.get('id', '')),
+                    'name': t.get('name', '')
+                }
+        
+        # Helper to extract form data matching server.py logic
+        def extract_form_data(target_obj):
+            # strict columns requested by user
+            form_data = {
+                "Mức độ đóng góp vào mục tiêu công ty": "",
+                "Mức độ ưu tiên mục tiêu của Quý": "",
+                "Tính khó/tầm ảnh hưởng đến hệ thống": ""
+            }
+            if 'form' in target_obj and isinstance(target_obj['form'], list):
+                for item in target_obj['form']:
+                    key = item.get('name')
+                    val = item.get('value')
+                    if key:
+                        form_data[key] = val
+            return form_data
+
+        # 2. Iterate ALL targets to find relevant ones
+        # We use a dictionary to ensure uniqueness and maximize coverage
+        targets_map = {}
+        
+        for t in raw_targets:
+            t_id = str(t.get('id', ''))
+            scope = t.get('scope', '')
+            parent_id = str(t.get('parent_id') or '')
+            
+            # Common extraction logic
+            def create_base_data(obj, parent_info=None):
+                data = {
+                    'target_id': str(obj.get('id', '')),
+                    'target_name': obj.get('name', ''),
+                    'target_scope': obj.get('scope', ''),
+                    'target_company_id': parent_info['id'] if parent_info else None,
+                    'target_company_name': parent_info['name'] if parent_info else None,
+                    'target_dept_id': None, 'target_dept_name': None,
+                    'target_team_id': None, 'target_team_name': None,
+                    'team_id': str(obj.get('team_id', '')),
+                    'dept_id': str(obj.get('dept_id', ''))
+                }
+                data.update(extract_form_data(obj))
+                return data
+
+            # Case A: Detached Dept/Team Target linked to Company Parent
+            if scope in ['dept', 'team'] and parent_id in company_targets_map:
+                parent = company_targets_map[parent_id]
+                target_data = create_base_data(t, parent)
+                targets_map[t_id] = target_data
+
+            # Case B: Company Target (inspect its cached_objs)
+            elif scope == 'company':
+                # Also add the company target itself if not present
+                if t_id not in targets_map:
+                     targets_map[t_id] = create_base_data(t, {'id': t_id, 'name': t.get('name', '')})
+
+                # Process cached_objs
+                if 'cached_objs' in t and isinstance(t['cached_objs'], list):
+                    for kr in t['cached_objs']:
+                        kr_id = str(kr.get('id', ''))
+                        parent_info = {'id': t_id, 'name': t.get('name', '')}
+                        sub_data = create_base_data(kr, parent_info)
+                        targets_map[kr_id] = sub_data
+            
+            # Case C: Catch-all for any other target not processed yet
+            elif t_id not in targets_map:
+                # Try to resolve parent name if possible
+                parent_info = None
+                if parent_id and parent_id in company_targets_map:
+                    parent_info = company_targets_map[parent_id]
+                
+                target_data = create_base_data(t, parent_info)
+                targets_map[t_id] = target_data
+        
+        collected_targets = list(targets_map.values())
+
+        # 3. Post-process: Fill columns and fetch sub-goals
+        for target_data in collected_targets:
+            # Fill specific columns based on scope
+            if target_data['target_scope'] == 'dept':
+                target_data['target_dept_id'] = target_data['target_id']
+                target_data['target_dept_name'] = target_data['target_name']
+            elif target_data['target_scope'] == 'team':
+                target_data['target_team_id'] = target_data['target_id']
+                target_data['target_team_name'] = target_data['target_name']
+            
+            # Fetch sub-goal IDs (Original logic preserved)
+            print(f"  Fetching sub-goals for target: {target_data['target_name']}...", end='\r')
+            target_data['list_goal_id'] = self.get_target_sub_goal_ids(target_data['target_id'])
+            
+            all_targets.append(target_data)
+        
+        print("\nFinished fetching all targets.")
+        return pd.DataFrame(all_targets)
+
     def get_goals_data(self, cycle_path: str) -> pd.DataFrame:
         """Get goals data from API"""
         url = "https://goal.base.vn/extapi/v1/cycle/get.full"
@@ -1617,12 +1752,72 @@ class APIClient:
         return all_checkins
 
 
+
+class AIActionEvaluator:
+    """Evaluates 'Next Action' content using AI"""
+    
+    @staticmethod
+    def evaluate_action(action_content: str) -> int:
+        """
+        Evaluate the quality of the 'Next Action' content.
+        
+        Criteria:
+        - +1: No clear action / Vague / Empty
+        - +3: Status report only (doing, trying...)
+        - +5: Clear action + Specific solution / Concrete plan
+        """
+        # TẠM THỜI KHÓA: Return 0 luôn để không gọi AI
+        return 0
+
+        # Nếu không có nội dung hoặc quá ngắn (dưới 5 ký tự) -> 0 điểm, không gọi AI
+        if not action_content or len(action_content.strip()) < 5:
+            return 0
+            
+        try:
+            prompt = f"""
+            Bạn là một trợ lý AI đánh giá chất lượng của nội dung "Công việc tiếp theo" trong báo cáo check-in.
+            
+            Nội dung cần đánh giá: "{action_content}"
+            
+            Hãy đánh giá dựa trên tiêu chí sau và CHỈ TRẢ VỀ MỘT CON SỐ (1, 3, hoặc 5):
+            - 1: Không có hành động rõ ràng, quá ngắn gọn, hoặc vô nghĩa.
+            - 3: Chỉ báo cáo trạng thái (đang làm, đang cố gắng, vẫn thế...) mà không có giải pháp cụ thể.
+            - 5: Có hành động rõ ràng, cụ thể, và hướng giải quyết/kế hoạch chi tiết.
+            
+            Output chỉ là số:
+            """
+            
+            response = ollama.generate(
+                model='gemini-3-flash-preview:cloud',
+                prompt=prompt
+            )
+            
+            result_text = response['response'].strip()
+            
+            # Extract number from response (handling potential extra text)
+            import re
+            match = re.search(r'\b(1|3|5)\b', result_text)
+            if match:
+                return int(match.group(1))
+            
+            # Fallback simple check if regex fails but simple number exists
+            if '5' in result_text: return 5
+            if '3' in result_text: return 3
+            if '1' in result_text: return 1
+            
+            return 1 # Default fallback
+            
+        except Exception as e:
+            print(f"AI Eval Error: {e}")
+            return 1 # Fallback on error
+
+
 class DataProcessor:
     """Handles data processing and transformations"""
     
     @staticmethod
     def extract_checkin_data(all_checkins: List[Dict]) -> pd.DataFrame:
-        """Extract checkin data into DataFrame - Using exact logic from checkin.py"""
+        """Extract checkin data into DataFrame"""
         checkin_list = []
 
         for checkin in all_checkins:
@@ -1633,14 +1828,12 @@ class DataProcessor:
                 since_timestamp = checkin.get('since', '')
                 since_date = DataProcessor._convert_timestamp_to_datetime(since_timestamp) or ''
                 
-                # Extract form value
                 form_data = checkin.get('form', [])
                 form_value = form_data[0].get('value', '') if form_data else ''
                 
-                # Extract target info
                 obj_export = checkin.get('obj_export', {})
-                target_name = obj_export.get('name', '')
-                kr_id = str(obj_export.get('id', ''))
+                target_name = obj_export.get('name', '') if obj_export else ''
+                kr_id = str(obj_export.get('id', '')) if obj_export else ''
                 current_value = checkin.get('current_value', 0)
                 
                 checkin_list.append({
@@ -1652,76 +1845,60 @@ class DataProcessor:
                     'checkin_target_name': target_name,
                     'checkin_kr_current_value': current_value,
                     'kr_id': kr_id,
-                    'checkin_user_id': user_id
+                    'checkin_user_id': user_id,
+                    'next_action_score': AIActionEvaluator.evaluate_action(form_value)
                 })
                 
             except Exception as e:
-                st.warning(f"Warning: Error processing checkin {checkin.get('id', 'Unknown')}: {e}")
+                print(f"Warning: Error processing checkin {checkin.get('id', 'Unknown')}: {e}")
                 continue
+
+        if not checkin_list:
+            return pd.DataFrame(columns=[
+                'checkin_id', 'checkin_name', 'checkin_since', 'checkin_since_timestamp',
+                'cong_viec_tiep_theo', 'checkin_target_name', 'checkin_kr_current_value',
+                'kr_id', 'checkin_user_id', 'next_action_score'
+            ])
 
         return pd.DataFrame(checkin_list)
 
     @staticmethod
     def _convert_timestamp_to_datetime(timestamp):
-        """Convert timestamp to datetime string - Exact copy from checkin.py"""
+        """Convert timestamp to datetime string in Asia/Ho_Chi_Minh timezone"""
         if timestamp is None or timestamp == '' or timestamp == 0:
             return None
         try:
-            return datetime.fromtimestamp(int(timestamp)).strftime('%Y-%m-%d %H:%M:%S')
+            # Chuyển timestamp về UTC datetime
+            dt_utc = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+            # Chuyển sang timezone Asia/Ho_Chi_Minh
+            tz_hcm = pytz.timezone('Asia/Ho_Chi_Minh')
+            dt_hcm = dt_utc.astimezone(tz_hcm)
+            return dt_hcm.strftime('%Y-%m-%d %H:%M:%S')
         except (ValueError, TypeError):
             return None
-
-    @staticmethod
-    def _process_single_checkin(checkin: Dict) -> Dict:
-        """Process a single checkin record - DEPRECATED, use extract_checkin_data directly"""
-        checkin_id = checkin.get('id', '')
-        checkin_name = checkin.get('name', '')
-        user_id = str(checkin.get('user_id', ''))
-        since_timestamp = checkin.get('since', '')
-        since_date = DateUtils.convert_timestamp_to_datetime(since_timestamp) or ''
-
-        # Extract form value
-        form_data = checkin.get('form', [])
-        form_value = form_data[0].get('value', '') if form_data else ''
-
-        # Extract target info
-        obj_export = checkin.get('obj_export', {})
-        target_name = obj_export.get('name', '')
-        kr_id = str(obj_export.get('id', ''))
-        current_value = checkin.get('current_value', 0)
-
-        return {
-            'checkin_id': checkin_id,
-            'checkin_name': checkin_name,
-            'checkin_since': since_date,
-            'cong_viec_tiep_theo': form_value,
-            'checkin_target_name': target_name,
-            'checkin_kr_current_value': current_value,
-            'kr_id': kr_id,
-            'checkin_user_id': user_id
-        }
 
     @staticmethod
     def clean_final_data(df: pd.DataFrame) -> pd.DataFrame:
         """Clean and prepare final dataset"""
         try:
-            # Fill NaN values
             df['kr_current_value'] = pd.to_numeric(df['kr_current_value'], errors='coerce').fillna(0.00)
             df['checkin_kr_current_value'] = pd.to_numeric(df['checkin_kr_current_value'], errors='coerce').fillna(0.00)
+            
+            # Fill NaN next_action_score with 0 (no checkin or failed eval)
+            if 'next_action_score' in df.columns:
+                df['next_action_score'] = pd.to_numeric(df['next_action_score'], errors='coerce').fillna(0).astype(int)
 
-            # Fill dates
             df['kr_since'] = df['kr_since'].fillna(df['goal_since'])
             df['checkin_since'] = df['checkin_since'].fillna(df['kr_since'])
 
-            # Drop unused columns
-            columns_to_drop = ['goal_user_id', 'kr_user_id']
+            columns_to_drop = ['kr_user_id']
             existing_columns_to_drop = [col for col in columns_to_drop if col in df.columns]
             if existing_columns_to_drop:
                 df = df.drop(columns=existing_columns_to_drop)
 
             return df
         except Exception as e:
-            st.error(f"Error cleaning data: {e}")
+            print(f"Error cleaning data: {e}")
             return df
 
 
@@ -1850,6 +2027,723 @@ class OKRCalculator:
             # st.warning(f"Error calculating kr_shift: {e}")
             return 0.0
 
+
+
+class OKRAnalysisSystem:
+    """Hệ thống phân tích OKR toàn diện"""
+    
+    def __init__(self, goal_token: str, account_token: str, checkin_path: str = None):
+        self.goal_token = goal_token
+        self.account_token = account_token
+        self.checkin_path = checkin_path
+        self.api_client = APIClient(goal_token, account_token)
+        self.checkin_data = None
+        self.goals_data = None
+        self.krs_data = None
+        self.target_data = None
+        self.filtered_members_df = None
+        
+    def get_cycle_list(self) -> List[Dict]:
+        """Lấy danh sách chu kỳ"""
+        return self.api_client.get_cycle_list()
+        
+    def load_and_process_data(self):
+        """Tải và xử lý dữ liệu từ API"""
+        print(f"Loading data for cycle: {self.checkin_path}...")
+        
+        # 1. Load data from API
+        goals_df = self.api_client.get_goals_data(self.checkin_path)
+        krs_df = self.api_client.get_krs_data(self.checkin_path)
+        
+        # Parse targets and assign to self.target_df
+        self.target_df = self.api_client.parse_targets_data(self.checkin_path)
+        
+        # Fetch checkins
+        all_checkins = self.api_client.get_all_checkins(self.checkin_path)
+        checkin_df = DataProcessor.extract_checkin_data(all_checkins)
+        
+        # Fetch account members
+        account_df = self.api_client.get_filtered_members()
+        self.filtered_members_df = account_df.copy() # Store for later use
+        
+        # 2. Process Member Filtering (logic from main checkin.py)
+        # Assuming account_df is already filtered by get_filtered_members
+        
+        # Filter Goal and KR data to only include users in the filtered account list
+        # Map user IDs to usernames first
+        all_users_df = self.api_client.get_account_users()
+        # Create map: id -> username
+        user_map = dict(zip(all_users_df['id'], all_users_df['username']))
+        user_name_map = dict(zip(all_users_df['id'], all_users_df['name'])) # id -> Full Name
+
+        # Enrich DataFrames with username
+        goals_df['user_id'] = goals_df['goal_user_id'] # alias
+        goals_df['username'] = goals_df['user_id'].map(user_map)
+        
+        krs_df['user_id'] = krs_df['kr_user_id'] # alias
+        krs_df['username'] = krs_df['user_id'].map(user_map)
+        
+        checkin_df['user_id'] = checkin_df['checkin_user_id']
+        checkin_df['username'] = checkin_df['user_id'].map(user_map)
+        
+        # Filter by filtered_members_df
+        valid_usernames = self.filtered_members_df['username'].tolist()
+        
+        self.goals_data = goals_df[goals_df['username'].isin(valid_usernames)].copy()
+        self.krs_data = krs_df[krs_df['username'].isin(valid_usernames)].copy()
+        self.checkin_data = checkin_df[checkin_df['username'].isin(valid_usernames)].copy()
+        
+        # Clean Final Data (Merge logic) - Similar to create_final_dataframe in legacy code
+        # We need a unified DF for calculations
+        # Merge Goals and KRs
+        merged_df = pd.merge(
+            self.krs_data, 
+            self.goals_data[['goal_id', 'goal_name', 'goal_user_id', 'goal_since', 'username']], 
+            on='goal_id', 
+            how='left',
+            suffixes=('_kr', '_goal')
+        )
+        
+        # Merge with Checkins
+        # Expand checkins for KRs
+        # Right join on checkins? Or Left join on KRs?
+        # We want to enable analysis of KRs with and without checkins
+        final_df = pd.merge(
+            merged_df,
+            self.checkin_data,
+            on='kr_id',
+            how='left'
+        )
+        
+        # Clean and Prepare
+        self.final_df = DataProcessor.clean_final_data(final_df)
+        
+        # Store for internal use
+        self.user_map = user_map
+        self.user_name_map = user_name_map
+        
+        print("Data loaded and processed successfully.")
+        return self.final_df
+
+    def analyze_missing_goals_and_checkins(self) -> Tuple[List[str], List[str], List[str]]:
+        """Phân tích người dùng thiếu mục tiêu và check-in"""
+        if self.filtered_members_df is None:
+            return [], [], []
+            
+        all_active_users = set(self.filtered_members_df['username'])
+        users_with_goals = set(self.goals_data['username'])
+        users_with_checkins = set(self.checkin_data['username'])
+        
+        # Users without goals
+        members_without_goals = list(all_active_users - users_with_goals)
+        
+        # Users without checkins (but might have goals)
+        members_without_checkins = list(all_active_users - users_with_checkins)
+        
+        # Users with goals but NO checkins (intersect)
+        members_with_goals_no_checkins = list(users_with_goals - users_with_checkins)
+        
+        # Convert to Full Names for reporting
+        def to_names(usernames):
+            return [self.filtered_members_df[self.filtered_members_df['username'] == u]['name'].iloc[0] for u in usernames if u in self.filtered_members_df['username'].values]
+            
+        return (
+            to_names(members_without_goals),
+            to_names(members_without_checkins),
+            to_names(members_with_goals_no_checkins)
+        )
+
+    def calculate_okr_shifts_by_user(self) -> List[Dict]:
+        """Calculate OKR shifts (Weekly)"""
+        return self._calculate_okr_shifts_by_period(period_type="weekly")
+
+    def calculate_okr_shifts_by_user_monthly(self) -> List[Dict]:
+        """Calculate OKR shifts (Monthly)"""
+        return self._calculate_okr_shifts_by_period(period_type="monthly")
+    
+    def _calculate_okr_shifts_by_period(self, period_type="weekly") -> List[Dict]:
+        """Generic OKR shift calculation"""
+        if self.final_df is None:
+            return []
+            
+        user_shifts = []
+        unique_users = self.final_df['goal_user_name'].unique()
+        
+        # Determine reference date based on period
+        if period_type == "weekly":
+            reference_date = DateUtils.get_last_friday()
+        else:
+            reference_date = DateUtils.get_last_month_end_date()
+            
+        for user_name in unique_users:
+            user_df = self.final_df[self.final_df['goal_user_name'] == user_name]
+            
+            if period_type == "weekly":
+                shift_data = self._calculate_weekly_shift_data(user_name, user_df, reference_date)
+            else:
+                shift_data = self._calculate_monthly_shift_data(user_name, user_df, reference_date)
+            
+            if shift_data:
+                user_shifts.append(shift_data)
+                
+        return sorted(user_shifts, key=lambda x: x.get('okr_shift', 0) if period_type=="weekly" else x.get('okr_shift_monthly', 0), reverse=True)
+
+    def _calculate_user_shift_data(self, user_name, user_df, reference_date, period_key_suffix="") -> Dict:
+        """Deprecated generic helper - see specific methods below"""
+        pass
+
+    def _calculate_weekly_shift_data(self, user_name, user_df, last_friday) -> Dict:
+        """Calculate weekly shift metrics"""
+        current_value = OKRCalculator.calculate_current_value(user_df)
+        last_friday_value, _ = OKRCalculator.calculate_reference_value(last_friday, user_df)
+        okr_shift = current_value - last_friday_value
+        
+        # Lấy user_id từ user_df
+        user_id = user_df['checkin_user_id'].iloc[0] if not user_df.empty else None
+        
+        return {
+            'user_name': user_name,
+            'user_id': user_id,
+            'current_value': current_value,
+            'last_friday_value': last_friday_value,
+            'okr_shift': okr_shift,
+            'kr_details_count': user_df['kr_id'].nunique()
+        }
+
+    def _calculate_monthly_shift_data(self, user_name, user_df, last_month_end) -> Dict:
+        """Calculate monthly shift metrics"""
+        current_value = OKRCalculator.calculate_current_value(user_df)
+        
+        # Logic đặc biệt cho tháng đầu quý (1, 4, 7, 10)
+        # Nếu đang ở tháng đầu quý, last_month_value = 0 (vì so với cuối quý trước, reset OKR)
+        # Hoặc logic khác tùy business rule. Ở đây giả sử so với 0.
+        
+        # Logic checkin.py:
+        # Nếu tháng hiện tại là tháng đầu quý (1, 4, 7, 10)
+        # Thì Monthly Shift = Current Value (vì đầu kỳ là 0)
+        
+        if DateUtils.should_calculate_monthly_shift(): # Luôn trả về True theo code mới
+            # Nhưng cần check xem last_month_end có phải là tháng của quý trước không?
+            # Hàm get_last_month_end_date trả về ngày cuối của tháng trước.
+            # Nếu hôm nay là tháng 4, last_month_end là 31/3.
+            
+            # Logic mới theo yêu cầu: Tháng 1, 4, 7, 10 -> dịch chuyển là chính giá trị hiện tại
+            current_month = datetime.now().month
+            if current_month in QUARTER_START_MONTHS:
+                 last_month_value = 0
+            else:
+                 last_month_value, _ = OKRCalculator.calculate_reference_value(last_month_end, user_df)
+        else:
+             last_month_value, _ = OKRCalculator.calculate_reference_value(last_month_end, user_df)
+
+        okr_shift_monthly = current_value - last_month_value
+        
+        # Lấy user_id từ user_df
+        user_id = user_df['checkin_user_id'].iloc[0] if not user_df.empty else None
+
+        return {
+            'user_name': user_name,
+            'user_id': user_id,
+            'current_value': current_value,
+            'last_month_value': last_month_value,
+            'okr_shift_monthly': okr_shift_monthly,
+            'kr_details_count': user_df['kr_id'].nunique()
+        }
+
+    def _calculate_final_okr_goal_shift(self, user_df, reference_date) -> float:
+        """Calculate shift aggregated by Goal first (average KRs shift), then average Goals"""
+        # Get unique combinations of Goal+KR
+        # Calculate shift for each KR
+        
+        # Logic from server.py _calculate_final_okr_goal_shift_monthly is complex
+        # For simplicity and consistency with verify_excel.py logic:
+        # We assume _calculate_weekly_shift_data logic is sufficient (Mean of Goals current - Mean of Goals past)
+        # But if we need exact per-KR shift aggregation:
+        
+        # This function might be redundant if we use OKRCalculator's approach
+        return 0
+
+    def analyze_checkin_behavior(self) -> Tuple[List[Dict], List[Dict]]:
+        """Phân tích hành vi check-in"""
+        if self.checkin_data is None:
+            return [], []
+            
+        # 1. Period Checkins (This Week / Month)
+        # Dùng logic tuần trước (Last Week) cho báo cáo tuần
+        last_friday = DateUtils.get_last_friday()
+        # Định nghĩa "tuần này" là từ sau last_friday đến hiện tại?
+        # Hay "tuần trước" là từ T2-CN tuần trước?
+        
+        # Theo yêu cầu report: "Checkin tuần trước" - là số lượng checkin thực hiện trong tuần trước
+        today = datetime.now()
+        days_since_monday = today.weekday()
+        monday_this_week = today - timedelta(days=days_since_monday)
+        monday_last_week = monday_this_week - timedelta(days=7)
+        sunday_last_week = monday_last_week + timedelta(days=6)
+        
+        # Filter checkins in last week range
+        checkins_last_week = self.checkin_data[
+            (pd.to_datetime(self.checkin_data['checkin_since_timestamp'], unit='s') >= monday_last_week) &
+            (pd.to_datetime(self.checkin_data['checkin_since_timestamp'], unit='s') <= sunday_last_week)
+        ]
+        
+        user_checkins_last_week = checkins_last_week.groupby('username').size().reset_index(name='checkin_count_period')
+        user_checkins_last_week['checkin_rate_period'] = user_checkins_last_week['checkin_count_period'] # Simple count
+        
+        period_checkins = user_checkins_last_week.to_dict('records')
+        
+        # 2. Overall Checkins (Quarter to Date)
+        # Tính từ đầu quý
+        quarter_start = DateUtils.get_quarter_start_date()
+        checkins_quarter = self.checkin_data[
+            pd.to_datetime(self.checkin_data['checkin_since_timestamp'], unit='s') >= quarter_start
+        ]
+        
+        user_total_checkins = checkins_quarter.groupby('username').size().reset_index(name='total_checkins')
+        
+        # Merge with last week data
+        overall_data = pd.merge(user_total_checkins, user_checkins_last_week, on='username', how='left').fillna(0)
+        overall_data.rename(columns={'checkin_count_period': 'last_week_checkins'}, inplace=True)
+        
+        # Calculate Frequency
+        weeks_passed = (today - quarter_start).days / 7
+        weeks_passed = max(1, weeks_passed)
+        overall_data['checkin_frequency_per_week'] = overall_data['total_checkins'] / weeks_passed
+        
+        # Rename username to user_name for consistency
+        overall_data.rename(columns={'username': 'user_name'}, inplace=True)
+        
+        overall_checkins = overall_data.to_dict('records')
+        
+        return period_checkins, overall_checkins
+
+    def analyze_alignment_contribution(self) -> Dict:
+        """Phân tích sự đóng góp và liên kết"""
+        if self.final_df is None:
+            return {}
+            
+        alignment_data = {}
+        unique_users = self.final_df['goal_user_name'].unique()
+        
+        for user_name in unique_users:
+            user_df = self.final_df[self.final_df['goal_user_name'] == user_name]
+            
+            # Form fields
+            alignment_scores = user_df['Mức độ đóng góp vào mục tiêu công ty'].replace('', '1').astype(float)
+            priority_scores = user_df['Mức độ ưu tiên mục tiêu của Quý'].replace('', '1').astype(float)
+            impact_scores = user_df['Tính khó/tầm ảnh hưởng đến hệ thống'].replace('', '1').astype(float)
+            
+            alignment_data[user_name] = {
+                'avg_alignment': alignment_scores.mean(),
+                'avg_priority': priority_scores.mean(),
+                'avg_impact': impact_scores.mean()
+            }
+            
+        return alignment_data
+
+    def generate_comprehensive_okr_report(self) -> Dict:
+        """Tạo báo cáo tổng hợp toàn diện"""
+        if self.final_df is None:
+            self.load_and_process_data()
+            
+        print("Analyzing OKR performance...")
+        
+        # 1. Weekly Analysis
+        weekly_analysis = self._analyze_weekly_okr_performance()
+        
+        # 2. Alerts and Warnings
+        alerts = self._generate_alerts_and_warnings(weekly_analysis['user_shifts'])
+        
+        # 3. Organization Health
+        health = self._calculate_organization_health(weekly_analysis, alerts)
+        
+        # 4. Detailed User Analysis
+        user_details = self._create_detailed_user_analysis(weekly_analysis['user_shifts'])
+        
+        # 5. Summary Report
+        report = {
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'cycle_path': self.checkin_path,
+            'weekly_okr_analysis': weekly_analysis,
+            'alerts_and_warnings': alerts,
+            'organization_health': health,
+            'detailed_user_analysis': user_details
+        }
+        
+        # Add Executive Summary
+        report['summary'] = self._create_summary_report(report)
+        
+        return report
+
+    def _analyze_weekly_okr_performance(self) -> Dict:
+        """Phân tích hiệu suất OKR tuần này"""
+        user_shifts = self.calculate_okr_shifts_by_user()
+        
+        total_users = len(user_shifts)
+        users_positive = len([u for u in user_shifts if u['okr_shift'] > 0])
+        users_negative = len([u for u in user_shifts if u['okr_shift'] < 0])
+        users_neutral = len([u for u in user_shifts if u['okr_shift'] == 0])
+        
+        avg_shift = np.mean([u['okr_shift'] for u in user_shifts]) if user_shifts else 0
+        avg_current_value = np.mean([u['current_value'] for u in user_shifts]) if user_shifts else 0
+        
+        # Performance Distribution
+        performance_dist = {
+            'high_performers': len([u for u in user_shifts if u['okr_shift'] >= 20]),
+            'medium_performers': len([u for u in user_shifts if 10 <= u['okr_shift'] < 20]),
+            'low_performers': len([u for u in user_shifts if u['okr_shift'] < 0])
+        }
+        
+        return {
+            'total_users': total_users,
+            'users_positive_shift': users_positive,
+            'users_negative_shift': users_negative,
+            'users_neutral_shift': users_neutral,
+            'avg_shift': avg_shift,
+            'avg_current_value': avg_current_value,
+            'performance_distribution': performance_dist,
+            'user_shifts': user_shifts
+        }
+
+    def _generate_alerts_and_warnings(self, user_shifts: List[Dict]) -> Dict:
+        """Tạo cảnh báo và thông báo"""
+        critical_issues = []
+        moderate_issues = []
+        opportunities = []
+        
+        # Get missing goals/checkins
+        no_goals, no_checkins, goals_no_checkins = self.analyze_missing_goals_and_checkins()
+        
+        for user in no_goals:
+            critical_issues.append({
+                'type': 'NO_GOALS',
+                'user': user,
+                'message': f"Nhân viên {user} chưa thiết lập OKR nào"
+            })
+            
+        for user in no_checkins:
+            critical_issues.append({
+                'type': 'NO_CHECKINS',
+                'user': user,
+                'message': f"Nhân viên {user} chưa thực hiện check-in nào"
+            })
+            
+        for user in goals_no_checkins:
+            moderate_issues.append({
+                'type': 'GOALS_NO_CHECKINS',
+                'user': user,
+                'message': f"Nhân viên {user} có mục tiêu nhưng chưa check-in"
+            })
+            
+        # Analyze Shifts for Issues
+        for user_data in user_shifts:
+            name = user_data['user_name']
+            shift = user_data['okr_shift']
+            
+            if shift < -5:
+                critical_issues.append({
+                    'type': 'NEGATIVE_PROGRESS',
+                    'user': name,
+                    'message': f"{name}: Tiến độ giảm mạnh ({shift:.2f}%)"
+                })
+            elif shift < 0:
+                moderate_issues.append({
+                    'type': 'SLIGHT_NEGATIVE',
+                    'user': name,
+                    'message': f"{name}: Tiến độ giảm nhẹ ({shift:.2f}%)"
+                })
+            elif shift >= 20:
+                opportunities.append({
+                    'type': 'HIGH_PERFORMANCE',
+                    'user': name,
+                    'message': f"{name}: Hiệu suất xuất sắc (+{shift:.2f}%)"
+                })
+                
+        return {
+            'critical_issues': critical_issues,
+            'moderate_issues': moderate_issues,
+            'improvement_opportunities': opportunities
+        }
+
+    def _calculate_organization_health(self, weekly_analysis: Dict, alerts: Dict) -> Dict:
+        """Tính điểm sức khỏe tổng thể của tổ chức"""
+        # 1. OKR Performance Score (0-40)
+        avg_shift = weekly_analysis.get('avg_shift', 0)
+        # Target avg shift per week ~1-5%? Normalized to 40
+        okr_score = min(40, max(0, (avg_shift + 5) * 4))
+        
+        # 2. Check-in Compliance Score (0-30)
+        total_users = weekly_analysis.get('total_users', 1)
+        critical_issues = len(alerts.get('critical_issues', []))
+        compliance_ratio = max(0, (total_users - critical_issues) / total_users)
+        checkin_score = compliance_ratio * 30
+        
+        # 3. Engagement Score (0-30)
+        # Based on positive shifts percentage
+        users_positive = weekly_analysis.get('users_positive_shift', 0)
+        engagement_ratio = users_positive / total_users if total_users > 0 else 0
+        engagement_score = engagement_ratio * 30
+        
+        overall_health = okr_score + checkin_score + engagement_score
+        
+        # Trends and Recommendations
+        trends = self._analyze_health_trends()
+        recommendations = self._generate_health_recommendations(overall_health, okr_score, checkin_score)
+        
+        return {
+            'overall_health_score': round(overall_health, 1),
+            'okr_health_score': round(okr_score * 2.5, 1), # Scale to 100
+            'checkin_health_score': round(checkin_score * 3.33, 1), # Scale to 100
+            'engagement_score': round(engagement_score * 3.33, 1),
+            'trends': trends,
+            'recommendations': recommendations
+        }
+
+    def _analyze_health_trends(self) -> List[str]:
+        """Phân tích xu hướng (Placeholder - Requires historical data)"""
+        return ["Dữ liệu lịch sử chưa đủ để phân tích xu hướng chi tiết"]
+
+    def _generate_health_recommendations(self, overall: float, okr: float, checkin: float) -> List[str]:
+        """Đưa ra khuyến nghị dựa trên điểm sức khỏe"""
+        recs = []
+        if overall < 60:
+            recs.append("Cần họp khẩn cấp để rà soát lại quy trình OKR")
+        if checkin < 15: # < 50%
+            recs.append("Tổ chức đào tạo lại về tầm quan trọng của Check-in")
+        if okr < 10:
+            recs.append("Rà soát lại tính khả thi của các mục tiêu")
+        return recs
+
+    def _create_detailed_user_analysis(self, user_shifts: List[Dict]) -> List[Dict]:
+        """Tạo phân tích chi tiết cho từng user"""
+        user_analysis = []
+        processed_checkins, overall_checkins = self.analyze_checkin_behavior()
+        alignment_data = self.analyze_alignment_contribution()
+        
+        for shift_data in user_shifts:
+            user_name = shift_data['user_name']
+            
+            # Find checkin data
+            user_period_checkin = next((x for x in processed_checkins if x['user_name'] == user_name), {})
+            user_overall_checkin = next((x for x in overall_checkins if x['user_name'] == user_name), {})
+            user_alignment = alignment_data.get(user_name, {})
+            
+            # Format Alignment strings
+            user_alignment_data = {
+                'alignment_score': f"{user_alignment.get('avg_alignment', 0):.1f}/5",
+                'priority_score': f"{user_alignment.get('avg_priority', 0):.1f}/5",
+                'impact_score': f"{user_alignment.get('avg_impact', 0):.1f}/5"
+            }
+            
+            analysis = {
+                'user_name': user_name,
+                'okr_performance': {
+                    'weekly_shift': shift_data['okr_shift'],
+                    'current_progress': shift_data['current_value'],
+                    'performance_level': self._classify_performance(shift_data['okr_shift'])
+                },
+                'checkin_behavior': {
+                    'period_checkins': user_period_checkin.get('checkin_count_period', 0),
+                    'total_checkins': user_overall_checkin.get('total_checkins', 0),
+                    'checkin_rate': user_period_checkin.get('checkin_rate_period', 0),
+                    'frequency_per_week': user_overall_checkin.get('checkin_frequency_per_week', 0),
+                    'last_week_checkins': user_overall_checkin.get('last_week_checkins', 0)
+                },
+                'alignment_contribution': user_alignment_data,
+                'risk_assessment': self._assess_user_risk(shift_data, user_period_checkin, user_overall_checkin),
+                'recommendations': self._generate_user_recommendations(shift_data, user_period_checkin)
+            }
+            
+            user_analysis.append(analysis)
+            
+        return sorted(user_analysis, key=lambda x: x['okr_performance']['weekly_shift'], reverse=True)
+
+    def _classify_performance(self, shift_value: float) -> str:
+        """Phân loại hiệu suất"""
+        if shift_value >= 20:
+            return 'Xuất sắc'
+        elif shift_value >= 10:
+            return 'Tốt'
+        elif shift_value >= 0:
+            return 'Đạt yêu cầu'
+        else:
+            return 'Cần cải thiện'
+
+    def _assess_user_risk(self, shift_data: Dict, period_checkin: Dict, overall_checkin: Dict) -> Dict:
+        """Đánh giá rủi ro của user"""
+        risk_score = 0
+        risk_factors = []
+        
+        # Kiểm tra tiến độ OKR
+        if shift_data.get('okr_shift', 0) < 0:
+            risk_score += 30
+            risk_factors.append('Tiến độ OKR âm')
+            
+        # Kiểm tra số lượng check-in
+        if period_checkin.get('checkin_count_period', 0) < 2:
+            risk_score += 25
+            risk_factors.append('Ít check-in trong kỳ')
+            
+        # Kiểm tra tần suất check-in
+        if overall_checkin.get('checkin_frequency_per_week', 0) < 1:
+            risk_score += 20
+            risk_factors.append('Tần suất check-in thấp')
+            
+        # Kiểm tra số KR
+        if shift_data.get('kr_details_count', 0) == 0:
+            risk_score += 25
+            risk_factors.append('Không có KR hoạt động')
+            
+        # Phân loại rủi ro
+        if risk_score >= 60:
+            risk_level = 'Cao'
+        elif risk_score >= 30:
+            risk_level = 'Trung bình'
+        else:
+            risk_level = 'Thấp'
+            
+        return {
+            'risk_score': risk_score,
+            'risk_level': risk_level,
+            'risk_factors': risk_factors
+        }
+
+    def _generate_user_recommendations(self, shift_data: Dict, period_checkin: Dict) -> List[str]:
+        """Tạo đề xuất cho từng user"""
+        recommendations = []
+        shift = shift_data.get('okr_shift', 0)
+        checkins = period_checkin.get('checkin_count_period', 0)
+        
+        if shift < 0:
+            recommendations.append('Tập trung cải thiện tiến độ OKR')
+            
+        if checkins < 2:
+            recommendations.append('Tăng cường tần suất check-in (ít nhất 2 lần/tuần)')
+            
+        if shift_data.get('kr_details_count', 0) == 0:
+            recommendations.append('Thiết lập các KR cụ thể và đo lường được')
+            
+        if not recommendations:
+            recommendations.append('Tiếp tục duy trì hiệu suất tốt')
+            
+        return recommendations
+
+    def _create_summary_report(self, report: Dict) -> Dict:
+        """Tạo báo cáo tổng hợp"""
+        summary = {
+            'report_generated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'key_metrics': {},
+            'top_issues': [],
+            'highlights': []
+        }
+        
+        # Các chỉ số chính
+        weekly_analysis = report.get('weekly_okr_analysis', {})
+        alerts = report.get('alerts_and_warnings', {})
+        health = report.get('organization_health', {})
+        
+        summary['key_metrics'] = {
+            'total_active_users': weekly_analysis.get('total_users', 0),
+            'okr_health_score': health.get('okr_health_score', 0),
+            'checkin_health_score': health.get('checkin_health_score', 0),
+            'overall_health_score': health.get('overall_health_score', 0),
+            'critical_issues': len(alerts.get('critical_issues', [])),
+            'moderate_issues': len(alerts.get('moderate_issues', []))
+        }
+        
+        # Các vấn đề hàng đầu
+        top_issues = []
+        for issue in alerts.get('critical_issues', [])[:5]:
+            top_issues.append(f"{issue['type']}: {issue['user']}")
+        for issue in alerts.get('moderate_issues', [])[:3]:
+            top_issues.append(f"{issue['type']}: {issue['user']}")
+        summary['top_issues'] = top_issues
+        
+        # Điểm nổi bật
+        highlights = []
+        if health.get('overall_health_score', 0) >= 80:
+            highlights.append('Sức khỏe OKR tổng thể rất tốt')
+        elif health.get('overall_health_score', 0) >= 65:
+            highlights.append('Sức khỏe OKR tổng thể ở mức tốt')
+        else:
+            highlights.append('Cần cải thiện sức khỏe OKR tổng thể')
+            
+        perf_dist = weekly_analysis.get('performance_distribution', {})
+        if perf_dist.get('high_performers', 0) > 0:
+            highlights.append(f'Có {perf_dist["high_performers"]} thành viên xuất sắc')
+            
+        summary['highlights'] = highlights
+        
+        return summary
+
+
+def print_report(report: Dict):
+    """Hiển thị báo cáo tổng hợp một cách dễ đọc"""
+    summary = report.get('summary', {})
+    
+    print(f"\n📊 THÔNG TIN TỔNG QUAN")
+    print("-" * 50)
+    print(f"Thời gian tạo báo cáo: {summary.get('report_generated', 'N/A')}")
+    print(f"Tổng số thành viên: {summary.get('key_metrics', {}).get('total_active_users', 0)}")
+    print(f"Điểm sức khỏe OKR: {summary.get('key_metrics', {}).get('okr_health_score', 0)}/100")
+    print(f"Điểm sức khỏe Check-in: {summary.get('key_metrics', {}).get('checkin_health_score', 0)}/100")
+    print(f"Điểm sức khỏe tổng thể: {summary.get('key_metrics', {}).get('overall_health_score', 0)}/100")
+    
+    # Điểm nổi bật
+    highlights = summary.get('highlights', [])
+    if highlights:
+        print(f"\n✨ ĐIỂM NỔI BẬT:")
+        for highlight in highlights:
+            print(f"  • {highlight}")
+            
+    # Các vấn đề hàng đầu
+    top_issues = summary.get('top_issues', [])
+    if top_issues:
+        print(f"\n⚠️  CÁC VẤN ĐỀ HÀNG ĐẦU:")
+        for issue in top_issues:
+            print(f"  • {issue['message']}")
+            
+    # Phân tích OKR theo tuần
+    weekly_analysis = report.get('weekly_okr_analysis', {})
+    if weekly_analysis:
+        print(f"\n📈 PHÂN TÍCH OKR THEO TUẦN")
+        print("-" * 50)
+        print(f"Tổng số người dùng: {weekly_analysis.get('total_users', 0)}")
+        print(f"Người dùng có tiến độ tích cực: {weekly_analysis.get('users_positive_shift', 0)}")
+        print(f"Người dùng có tiến độ âm: {weekly_analysis.get('users_negative_shift', 0)}")
+        print(f"Giá trị thay đổi trung bình: {weekly_analysis.get('avg_shift', 0):.2f}")
+        print(f"Giá trị hiện tại trung bình: {weekly_analysis.get('avg_current_value', 0):.2f}")
+        
+        perf_dist = weekly_analysis.get('performance_distribution', {})
+        print(f"\nPhân loại hiệu suất:")
+        print(f"  • Xuất sắc (≥20): {perf_dist.get('high_performers', 0)} người")
+        print(f"  • Tốt (10-19): {perf_dist.get('medium_performers', 0)} người")
+        print(f"  • Đạt yêu cầu (0-9): {len([u for u in report.get('detailed_user_analysis', []) if u['okr_performance']['performance_level'] == 'Đạt yêu cầu'])} người")
+        print(f"  • Cần cải thiện (<0): {perf_dist.get('low_performers', 0)} người")
+        
+    # Cảnh báo và thông báo
+    alerts = report.get('alerts_and_warnings', {})
+    if alerts:
+        print(f"\n🚨 CẢNH BÁO VÀ THÔNG BÁO")
+        print("-" * 50)
+        
+        critical_issues = alerts.get('critical_issues', [])
+        if critical_issues:
+            print(f"Vấn đề nghiêm trọng ({len(critical_issues)}):")
+            for issue in critical_issues[:5]:  # Hiển thị tối đa 5 vấn đề
+                print(f"  • {issue['message']}")
+                
+        moderate_issues = alerts.get('moderate_issues', [])
+        if moderate_issues:
+            print(f"\nVấn đề vừa phải ({len(moderate_issues)}):")
+            for issue in moderate_issues[:5]:  # Hiển thị tối đa 5 vấn đề
+                print(f"  • {issue['message']}")
+                
+        opportunities = alerts.get('improvement_opportunities', [])
+        if opportunities:
+            print(f"\nCơ hội cải thiện ({len(opportunities)}):")
+            for issue in opportunities[:5]:
+                print(f"  • {issue['message']}")
 
 class EmailReportGenerator:
     """Generate and send email reports for OKR analysis"""
