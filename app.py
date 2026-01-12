@@ -1752,20 +1752,6 @@ class APIClient:
 
 
 
-class AIActionEvaluator:
-    """Evaluates 'Next Action' content using AI"""
-    
-    @staticmethod
-    def evaluate_action(action_content: str) -> int:
-        """
-        Evaluate the quality of the 'Next Action' content.
-        
-        Currently disabled - returns 0 for all inputs.
-        Uses median score from Base Table instead.
-        """
-        return 0
-
-
 class DataProcessor:
     """Handles data processing and transformations"""
     
@@ -1800,7 +1786,7 @@ class DataProcessor:
                     'checkin_kr_current_value': current_value,
                     'kr_id': kr_id,
                     'checkin_user_id': user_id,
-                    'next_action_score': AIActionEvaluator.evaluate_action(form_value)
+                    'next_action_score': 0  # Disabled: Use median from Base Table instead
                 })
                 
             except Exception as e:
